@@ -19,6 +19,8 @@ import Testing
         let einpacken: Einpacken
         struct Code: Decodable { let roh: String; let code: String; let uid: Int; let gepackt: String }
         let code: Code
+        struct Bindung: Decodable { let ohne: String; let gefaelscht: String; let gefaelschtOhne: String; let gefaelschtText: String }
+        let bindung: Bindung
         let sicherheitsnummer: String
     }
     let v: Vektoren = try! JSONDecoder().decode(Vektoren.self, from: Data(contentsOf: Bundle.module.url(forResource: "dm", withExtension: "json", subdirectory: "Daten")!))
@@ -51,6 +53,58 @@ import Testing
         let e = try DmKrypto.reaktionEntschluesseln(v.reaktion.umschlag, ich: v.ada.id, mid: v.reaktion.mid, sid: v.reaktion.sid, konv: v.reaktion.konv, privat: v.ada.schluessel)
         #expect(e == "❤️")
         #expect(throws: (any Error).self) { try DmKrypto.reaktionEntschluesseln(v.reaktion.umschlag, ich: v.ada.id, mid: 43, sid: v.reaktion.sid, konv: v.reaktion.konv, privat: v.ada.schluessel) }
+    }
+
+    /// Bindung der Hülle an den Inhalt (seit 2026-11-19): Wer als Empfänger den Inhaltsschlüssel kennt, kann keinen
+    /// anderen Text unter die Hüllen des Absenders legen, und die sichtbaren Felder v und b sind mitgesichert.
+    @Test func bindungAnDenInhalt() throws {
+        let lesen = { (u: String) in try DmKrypto.entschluesseln(u, ich: v.bob.id, sid: v.ada.id, rid: String(v.bob.id), privat: v.bob.schluessel) }
+        #expect(try lesen(v.v1.umschlag).gebunden)
+        // Ältere Fassungen schicken keine Bindung: geht auf, gilt aber als nicht gebunden
+        let alt = try lesen(v.bindung.ohne)
+        #expect(alt.text == v.v1.text && !alt.gebunden)
+        // Bob legt anderen Text unter Adas Hüllen: scheitert bei Cleo, auf Adas eigenem Gerät und bei ihm selbst
+        for p in [v.cleo, v.ada, v.bob] {
+            #expect(throws: DmKrypto.Fehler.unlesbar) { try DmKrypto.entschluesseln(v.bindung.gefaelscht, ich: p.id, sid: v.ada.id, rid: "g9", privat: p.schluessel) }
+        }
+        // Ohne Bindung (so sähe es aus, wenn jemand sie entfernt): lesbar, aber als nicht gebunden erkennbar
+        let f = try DmKrypto.entschluesseln(v.bindung.gefaelschtOhne, ich: v.cleo.id, sid: v.ada.id, rid: "g9", privat: v.cleo.schluessel)
+        #expect(f.text == v.bindung.gefaelschtText && !f.gebunden)
+        // Sichtbare Felder: Anhangliste geleert, Fassung von 2 auf 1 gestellt
+        var u = try #require(JSONSerialization.jsonObject(with: Data(v.v2.umschlag.utf8)) as? [String: Any])
+        u["b"] = [String]()
+        let ohneB = String(decoding: try JSONSerialization.data(withJSONObject: u), as: UTF8.self)
+        #expect(throws: DmKrypto.Fehler.unlesbar) { try lesen(ohneB) }
+        u["v"] = 1; u["b"] = nil
+        let alsV1 = String(decoding: try JSONSerialization.data(withJSONObject: u), as: UTF8.self)
+        #expect(throws: DmKrypto.Fehler.unlesbar) { try lesen(alsV1) }
+        // Was Swift selbst verschlüsselt, ist gebunden
+        let eigen = try DmKrypto.verschluesseln(text: "aus Swift", sid: v.ada.id, rid: String(v.bob.id), privat: v.ada.schluessel, pub: v.ada.oeffentlich, ziele: [v.bob.id: v.bob.oeffentlich])
+        #expect(try lesen(eigen).gebunden)
+    }
+
+    /// Antworten aus Android: bis 2026-11-19 fehlte dort das Feld bild, wenn es false war, und die Nachricht war hier unlesbar
+    @Test func zitatOhneBildFeld() throws {
+        let z = try JSONDecoder().decode(DmKrypto.Zitat.self, from: Data(#"{"id":7,"von":3,"t":"Vorher"}"#.utf8))
+        #expect(z == DmKrypto.Zitat(id: 7, von: 3, t: "Vorher", bild: false))
+        #expect(try JSONDecoder().decode(DmKrypto.Zitat.self, from: Data(#"{"id":7,"von":3,"t":"x","bild":true}"#.utf8)).bild)
+        // Beim Verschlüsseln geprüft wie im Browser: Auszug auf 140 Zeichen, ungültige Nummer abgelehnt
+        let lang = DmKrypto.Zitat(id: 7, von: v.bob.id, t: String(repeating: "ä", count: 300), bild: false)
+        let u = try DmKrypto.verschluesseln(text: "ja", zitat: lang, sid: v.ada.id, rid: String(v.bob.id), privat: v.ada.schluessel, pub: v.ada.oeffentlich, ziele: [v.bob.id: v.bob.oeffentlich])
+        #expect(try DmKrypto.entschluesseln(u, ich: v.bob.id, sid: v.ada.id, rid: String(v.bob.id), privat: v.bob.schluessel).zitat?.t.unicodeScalars.count == 140)
+        #expect(throws: DmKrypto.Fehler.unlesbar) {
+            try DmKrypto.verschluesseln(text: "ja", zitat: DmKrypto.Zitat(id: 0, von: 3, t: "x", bild: false), sid: v.ada.id, rid: String(v.bob.id), privat: v.ada.schluessel, pub: v.ada.oeffentlich, ziele: [v.bob.id: v.bob.oeffentlich])
+        }
+    }
+
+    /// Reaktionen: jedes Emoji ergibt dasselbe Maß (48 Bytes und 16 für GCM), sonst verriete die Länge die Gruppe des Emojis
+    @Test func reaktionLaengeVersteckt() throws {
+        struct Kopf: Decodable { let c: String }
+        for emoji in ["👍", "❤️", "✅", "👍🏽", "🇪🇺", "👨‍👩‍👧"] {
+            let rx = try DmKrypto.reaktionVerschluesseln(emoji, mid: 5, sid: v.ada.id, konv: "p2-3", privat: v.ada.schluessel, pub: v.ada.oeffentlich, ziele: [v.bob.id: v.bob.oeffentlich])
+            #expect(Data(b64u: try JSONDecoder().decode(Kopf.self, from: Data(rx.utf8)).c)?.count == 64)
+            #expect(try DmKrypto.reaktionEntschluesseln(rx, ich: v.bob.id, mid: 5, sid: v.ada.id, konv: "p2-3", privat: v.bob.schluessel) == emoji)
+        }
     }
 
     @Test func gruppennameWieImBrowser() throws {
@@ -128,6 +182,13 @@ import Testing
         #expect(DmKrypto.emojiPruefen("❤️") == "❤️")
         #expect(DmKrypto.emojiPruefen("🇪🇺") == "🇪🇺")
         #expect(DmKrypto.emojiPruefen("👍🏽") == "👍🏽")
+        // Zusammengesetzte Emojis (mit dem Verbinder U+200D) und Tastenkappen, wie Web und Android sie annehmen
+        #expect(DmKrypto.emojiPruefen("👨‍👩‍👧") == "👨‍👩‍👧")
+        #expect(DmKrypto.emojiPruefen("🏳️‍🌈") == "🏳️‍🌈")
+        #expect(DmKrypto.emojiPruefen("1️⃣") == "1️⃣")
+        #expect(DmKrypto.emojiPruefen("👍 ") == "👍")
+        #expect(DmKrypto.emojiPruefen("👍\n👍") == nil)
+        #expect(DmKrypto.emojiPruefen("\u{0007}") == nil)
         #expect(DmKrypto.emojiPruefen("a") == nil)
         #expect(DmKrypto.emojiPruefen("❤️❤️") == nil)
         #expect(DmKrypto.saeubern("  a\u{202E}b\u{200B}c\n\n\n\nd  ") == "abc\n\nd")

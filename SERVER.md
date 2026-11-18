@@ -2,7 +2,7 @@
 
 The europe.social server is not open source. This page shows the parts of it that matter for direct messages: the
 database tables that hold DM data, and the function that checks every envelope before it is stored. Both are
-excerpts of the production code, taken from commit `7fe4949bd7ec` of the private repository on 2026-11-18. Comments
+excerpts of the production code, taken from commit `60891b4ace40` of the private repository on 2026-11-19. Comments
 in the code are German.
 
 ## Database tables
@@ -126,12 +126,17 @@ each account's settings for who may send DMs, typing indicators and read receipt
 
 Every message and reaction passes through this function before it is stored. It checks form and size, that the
 envelope names the sender's registered public key, and that the content key is wrapped for exactly the participants
-of the conversation. It cannot see or check anything inside the ciphertext.
+of the conversation. It cannot see or check anything inside the ciphertext, and it cannot recompute the binding tag
+`t` ([PROTOCOL.md, section 4.3](PROTOCOL.md#43-binding-the-wraps-to-the-content)); it only checks its form and
+still accepts wraps without one from app versions released before 2026-11-19. `B64U` is `/^[A-Za-z0-9_-]+$/`,
+`BILD_ID` is `/^[A-Za-z0-9_-]{22}$/`, `BINDUNG` is `/^[A-Za-z0-9_-]{43}$/`.
 
 ```js
   // Umschlag prüfen. ziele: Kontonummern, für die eingepackt sein muss (genau diese, man selbst eingeschlossen).
   // reaktion: nur ein Emoji, nie Bilder. gruppe: passt die Liste nicht, hat sich die Mitgliedschaft geändert (409, der
-  // Browser holt die Schlüssel neu und versucht es noch einmal)
+  // Browser holt die Schlüssel neu und versucht es noch einmal). Je Ziel e, n, w und, seit 2026-11-19, die Bindung t;
+  // ältere Fassungen der Apps schicken t noch nicht und werden weiter angenommen. Der Server kann t nicht nachrechnen,
+  // er prüft nur die Form.
   function umschlagPruefen(ctx, roh, me, ziele, { reaktion = false, gruppe: inGruppe = false } = {}) {
     const kaputt = T(ctx, 'This message could not be encrypted. Please reload the page.');
     if (typeof roh !== 'string' || roh.length > 40000 + ziele.length * 400) throw new Error(kaputt);
@@ -141,6 +146,8 @@ of the conversation. It cannot see or check anything inside the ciphertext.
     // Art, Maße, Beschreibung und Schlüssel stehen im verschlüsselten Teil
     const v2 = !reaktion && !!e && e.v === 2;
     const ok = x => typeof x === 'string' && x.length <= (v2 ? 30000 : 8000) && B64U.test(x);
+    const huelle = h => !!h && typeof h === 'object' && ok(h.e) && ok(h.n) && ok(h.w)
+      && (h.t === undefined ? Object.keys(h).length === 3 : Object.keys(h).length === 4 && typeof h.t === 'string' && BINDUNG.test(h.t));
     const eigen = get('SELECT public_key FROM dm_keys WHERE user_id = ?', me.id);
     if (!eigen) throw new Error(T(ctx, 'Set up encrypted messages first: open Messages and unlock them with your passkey.'));
     const vorhanden = Object.keys(e?.k || {}).sort();
@@ -150,7 +157,7 @@ of the conversation. It cannot see or check anything inside the ciphertext.
       throw new Error(kaputt);
     }
     if (!e || (e.v !== 1 && !v2) || e.s !== eigen.public_key || !ok(e.n) || !ok(e.c)
-      || !vorhanden.every(z => e.k[z] && ok(e.k[z].e) && ok(e.k[z].n) && ok(e.k[z].w) && Object.keys(e.k[z]).length === 3)
+      || !vorhanden.every(z => huelle(e.k[z]))
       || Object.keys(e).length !== (v2 ? 6 : 5)) throw new Error(kaputt);
     if (v2 && !(Array.isArray(e.b) && e.b.length <= MAX_BILDER && new Set(e.b).size === e.b.length && e.b.every(x => typeof x === 'string' && BILD_ID.test(x)))) throw new Error(kaputt);
     const grenze = reaktion ? 64 : MAX * 4 + (v2 ? MAX_BILDER * (MAX_ALT * 4 + 200) + 64 + 700 : 0) + 16;

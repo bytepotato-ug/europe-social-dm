@@ -186,6 +186,9 @@ object Krypto {
         return m.doFinal(daten)
     }
 
+    /** HMAC-SHA256, für die Bindung der Hülle an den Inhalt ([DmKrypto]) */
+    fun hmacSha256(schluessel: ByteArray, daten: ByteArray): ByteArray = hmac(schluessel, daten)
+
     /** HKDF-SHA256 (RFC 5869); ohne Salz gilt ein Salz aus 32 Nullbytes, wie bei CryptoKit und WebCrypto */
     fun hkdf(ikm: ByteArray, salz: ByteArray, info: ByteArray, laenge: Int = 32): ByteArray {
         val prk = hmac(if (salz.isEmpty()) ByteArray(32) else salz, ikm)

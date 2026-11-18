@@ -51,3 +51,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: swift test
         working-directory: ios/EuropeKit
+      # The Swift tests write what Swift encrypted (message, picture, reaction); the browser code has to open it
+      - name: Browser opens what Swift encrypted
+        run: node ios/Werkzeuge/dm-pruefvektoren.mjs --pruefen "${TMPDIR%/}/europe-dm-swift.json"

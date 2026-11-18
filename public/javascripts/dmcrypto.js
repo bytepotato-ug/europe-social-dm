@@ -10,6 +10,12 @@
 // den statischen Schlüssel des Absenders S ein: Nur wer S besitzt, kann eine Nachricht in seinem Namen bauen.
 // Keine Forward Secrecy: Wer später den privaten Schlüssel erbeutet, kann alte Nachrichten lesen.
 //
+// Bindung (seit 2026-11-19, Feld t je Ziel): Der Inhaltsschlüssel K allein sagt nichts darüber, WAS der Absender
+// geschrieben hat, denn jeder Empfänger kennt K und könnte damit anderen Text verschlüsseln und die Hüllen des Absenders
+// für die übrigen Empfänger weiterverwenden. Darum trägt jede Hülle einen HMAC über die sichtbaren Teile des Umschlags
+// (v, n, c, b), dessen Schlüssel aus ECDH(S, P) stammt: Nur Absender und genau dieser Empfänger können ihn rechnen.
+// Ältere Fassungen schicken kein t und überlesen es; fehlt es, gilt die Nachricht als nicht gebunden (gebunden: false).
+//
 // Bilder (v2): Jedes Bild wird mit demselben Inhaltsschlüssel K und eigenem Zufalls-IV verschlüsselt und als Chiffrat
 // hochgeladen. Kennung, IV, Art, Maße und Beschreibung stehen im verschlüsselten Text ({ t, a: [...] }); der
 // Server sieht nur die Kennungen (Feld b), um Zugriff und Löschen zu regeln. Ein vertauschtes oder fremdes Chiffrat
@@ -159,6 +165,19 @@
   function kek(z1, z2, ephRaw, basis, fuer, nutzung) {
     return hkdf(verbinden(z1, z2), ephRaw, basis + '|' + fuer, nutzung);
   }
+  // Bindung der Hülle an den Inhalt: HMAC-SHA-256 über die sichtbaren Teile, Schlüssel per HKDF aus z2 = ECDH(S, P)
+  // (ohne den Wegwerfschlüssel, damit der Absender sie auch nachträglich rechnen kann), Salz = Wegwerfschlüssel der Hülle.
+  function bindeText(u) {
+    var b = u.v === 2 && Array.isArray(u.b) ? u.b : [];
+    if (typeof u.n !== 'string' || typeof u.c !== 'string' || b.some(function (x) { return typeof x !== 'string' || /[|,]/.test(x); })) throw new Error('Envelope unreadable.');
+    return enc.encode('cs-dm-bind-v1|' + u.v + '|' + u.n + '|' + u.c + '|' + b.join(','));
+  }
+  function bindeSchluessel(z2, ephRaw, basis, fuer) {
+    return sub.importKey('raw', z2, 'HKDF', false, ['deriveKey']).then(function (g) {
+      return sub.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: ephRaw, info: enc.encode(basis + '|' + fuer + '|bind-v1') }, g,
+        { name: 'HMAC', hash: 'SHA-256', length: 256 }, false, ['sign', 'verify']);
+    });
+  }
 
   // Kern für Nachrichten und Reaktionen: klar (Bytes) mit Inhaltsschlüssel k verschlüsseln und k für jedes Ziel
   // ({ kontonummer: öffentlicher Schlüssel }, Absender eingeschlossen) einpacken. kopf: weitere sichtbare Felder.
@@ -174,10 +193,10 @@
             var p = z[0], eph = z[1];
             return Promise.all([ecdh(eph.privateKey, p), ecdh(o.senderPrivat, p), sub.exportKey('raw', eph.publicKey)]).then(function (w) {
               var ephRaw = new Uint8Array(w[2]);
-              return kek(w[0], w[1], ephRaw, basis, fuer, ['encrypt']).then(function (kk) {
+              return Promise.all([kek(w[0], w[1], ephRaw, basis, fuer, ['encrypt']), bindeSchluessel(w[1], ephRaw, basis, fuer)]).then(function (kk) {
                 var iv2 = zufall(12);
-                return sub.encrypt({ name: 'AES-GCM', iv: iv2 }, kk, y[1]).then(function (wk) {
-                  umschlag.k[fuer] = { e: b64u(ephRaw), n: b64u(iv2), w: b64u(wk) };
+                return Promise.all([sub.encrypt({ name: 'AES-GCM', iv: iv2 }, kk[0], y[1]), sub.sign('HMAC', kk[1], bindeText(umschlag))]).then(function (wk) {
+                  umschlag.k[fuer] = { e: b64u(ephRaw), n: b64u(iv2), w: b64u(wk[0]), t: b64u(wk[1]) };
                 });
               });
             });
@@ -186,13 +205,26 @@
       });
     });
   }
-  // Gegenstück: liefert { klar (Bytes), schluessel (Inhaltsschlüssel, nur zum Entschlüsseln), u (Umschlag) }
+  // Gegenstück: liefert { klar (Bytes), schluessel (Inhaltsschlüssel, nur zum Entschlüsseln), u (Umschlag),
+  // gebunden (die Hülle trägt eine gültige Bindung an genau diesen Inhalt) }. Trägt die Hülle ein t, das nicht passt,
+  // wurde der Umschlag verändert: Fehler. Alles läuft im Promise, auch bei kaputten Feldern (kein synchroner Wurf).
   function oeffnen(u, basis, o) {
-    var mein = u.k[o.ich], inhalt, roh;
-    return Promise.all([pubImport(mein.e), pubImport(u.s)]).then(function (x) {
+    var mein = u.k[o.ich], inhalt, roh, gebunden = false;
+    return Promise.resolve().then(function () {
+      if (!mein || typeof mein !== 'object') throw new Error('Not encrypted for this account.');
+      return Promise.all([pubImport(mein.e), pubImport(u.s)]);
+    }).then(function (x) {
       return Promise.all([ecdh(o.privat, x[0]), ecdh(o.privat, x[1])]);
     }).then(function (z) {
-      return kek(z[0], z[1], unb64u(mein.e), basis, String(o.ich), ['decrypt']);
+      var ephRaw = unb64u(mein.e);
+      if (mein.t === undefined) return kek(z[0], z[1], ephRaw, basis, String(o.ich), ['decrypt']);
+      return bindeSchluessel(z[1], ephRaw, basis, String(o.ich)).then(function (bk) {
+        return sub.verify('HMAC', bk, unb64u(mein.t), bindeText(u));
+      }).then(function (passt) {
+        if (!passt) throw new Error('This message was changed after it was sent.');
+        gebunden = true;
+        return kek(z[0], z[1], ephRaw, basis, String(o.ich), ['decrypt']);
+      });
     }).then(function (kk) {
       return sub.decrypt({ name: 'AES-GCM', iv: unb64u(mein.n) }, kk, unb64u(mein.w));
     }).then(function (kRaw) {
@@ -201,12 +233,12 @@
     }).then(function (k) {
       inhalt = k;
       return sub.decrypt({ name: 'AES-GCM', iv: unb64u(u.n), additionalData: enc.encode(basis) }, k, unb64u(u.c));
-    }).then(function (klar) { return { klar: new Uint8Array(klar), schluessel: inhalt, roh: roh, u: u }; });
+    }).then(function (klar) { return { klar: new Uint8Array(klar), schluessel: inhalt, roh: roh, u: u, gebunden: gebunden }; });
   }
   function umschlagLesen(text, o) {
     var u;
     try { u = JSON.parse(text); } catch (e) { throw new Error('Envelope unreadable.'); }
-    if (!u || !u.k || !u.k[o.ich] || typeof u.s !== 'string') throw new Error('Nicht für dieses Konto verschlüsselt.');
+    if (!u || !u.k || !u.k[o.ich] || typeof u.s !== 'string') throw new Error('Not encrypted for this account.');
     return u;
   }
   // Ziele: in Gruppen alle Mitglieder (o.empfaenger), sonst Empfänger und Absender
@@ -238,23 +270,33 @@
   }
   // konv: Unterhaltung, gleich aus beiden Blickwinkeln (zu zweit „p<kleinere>-<größere Nummer>“, Gruppe „g<Nummer>“)
   function reaktionsKontext(mid, sid, konv, s) { return 'cs-dm-reaktion-v1|' + mid + '|' + sid + '|' + konv + '|' + s; }
+  // Länge verstecken (seit 2026-11-19): Emojis sind 3 bis über 30 Bytes lang, die Größe des Chiffrats verriete sonst,
+  // aus welcher Gruppe das Emoji stammt (❤️ 6 Bytes, 👍 4, mit Hautton 8). Darum mit Leerzeichen auf feste 48 Bytes
+  // (der Server lässt 64 Bytes Chiffrat zu: 48 und 16 für GCM). Alle Fassungen schneiden Leerzeichen beim Lesen ab.
+  var REAKTION_BYTES = 48;
+  function reaktionAuffuellen(bytes) {
+    if (bytes.length >= REAKTION_BYTES) return bytes;
+    var r = new Uint8Array(REAKTION_BYTES).fill(0x20);
+    r.set(bytes, 0);
+    return r;
+  }
   // o: emoji, mid (Nachrichtennummer), sid (wer reagiert), konv, senderPrivat, senderPub,
   //    empfaenger ({ kontonummer: öffentlicher Schlüssel } aller anderen Beteiligten)
   function reaktionVerschluesseln(o) {
     var emoji = emojiPruefen(o.emoji);
     if (!emoji) return Promise.reject(new Error('Invalid reaction.'));
     if (!o.empfaenger) return Promise.reject(new Error('Reactions need the recipients.'));
-    return versiegeln(reaktionsKontext(o.mid, o.sid, o.konv, o.senderPub), enc.encode(emoji), o, zieleVon(o), { v: 1 });
+    return versiegeln(reaktionsKontext(o.mid, o.sid, o.konv, o.senderPub), reaktionAuffuellen(enc.encode(emoji)), o, zieleVon(o), { v: 1 });
   }
-  // o: ich, mid, sid (wer reagiert hat), konv, privat. Liefert { emoji, absenderSchluessel }
+  // o: ich, mid, sid (wer reagiert hat), konv, privat. Liefert { emoji, absenderSchluessel, gebunden }
   function reaktionEntschluesseln(text, o) {
     var u;
     try { u = umschlagLesen(text, o); } catch (e) { return Promise.reject(e); }
-    if (u.v !== 1) return Promise.reject(new Error('Unbekannte Fassung.'));
+    if (u.v !== 1) return Promise.reject(new Error('Unknown version.'));
     return oeffnen(u, reaktionsKontext(o.mid, o.sid, o.konv, u.s), o).then(function (r) {
       var emoji = emojiPruefen(dec.decode(r.klar));
-      if (!emoji) throw new Error('Keine Reaktion.');
-      return { emoji: emoji, absenderSchluessel: u.s };
+      if (!emoji) throw new Error('Not a reaction.');
+      return { emoji: emoji, absenderSchluessel: u.s, gebunden: r.gebunden };
     });
   }
 
@@ -322,26 +364,26 @@
     return versiegeln(kontext(sid, rid, o.senderPub), auffuellen(enc.encode(klar), json ? MAX_V2 : MAX_V1), o, zieleVon(o), kopf, o.schluessel);
   }
 
-  // ich: eigene Nutzer-ID; privat: eigener privater Schlüssel. Liefert { text, absenderSchluessel, anhaenge, bild }:
+  // ich: eigene Nutzer-ID; privat: eigener privater Schlüssel. Liefert { text, absenderSchluessel, anhaenge, bild, gebunden }:
   // bild(chiffrat, anhang) entschlüsselt ein heruntergeladenes Bild mit dem Schlüssel dieser Nachricht.
   function entschluesseln(umschlagText, o) {
     var u;
     try { u = umschlagLesen(umschlagText, o); } catch (e) { return Promise.reject(e); }
-    if (u.v !== 1 && u.v !== 2) return Promise.reject(new Error('Unbekannte Fassung.'));
+    if (u.v !== 1 && u.v !== 2) return Promise.reject(new Error('Unknown version.'));
     var sichtbar = u.v === 2 && Array.isArray(u.b) ? u.b : [];
     var sid = String(o.sid), rid = String(o.rid);
     return oeffnen(u, kontext(sid, rid, u.s), o).then(function (r) {
       var text = dec.decode(r.klar), anhaenge = [], zitat = null;
       if (u.v === 2) {
         var j;
-        try { j = JSON.parse(text); } catch (e) { throw new Error('Inhalt unlesbar.'); }
+        try { j = JSON.parse(text); } catch (e) { throw new Error('Content unreadable.'); }
         text = j && typeof j.t === 'string' ? j.t : '';
         anhaenge = (Array.isArray(j && j.a) ? j.a : []).map(anhangPruefen)
           .filter(function (a) { return a && sichtbar.indexOf(a.id) >= 0; }).slice(0, MAX_BILDER);
         zitat = j ? zitatPruefen(j.q) : null;
       }
       return {
-        text: saeubern(text), absenderSchluessel: u.s, anhaenge: anhaenge, zitat: zitat, schluesselRoh: r.roh,
+        text: saeubern(text), absenderSchluessel: u.s, anhaenge: anhaenge, zitat: zitat, schluesselRoh: r.roh, gebunden: r.gebunden,
         bild: function (chiffrat, a) {
           return sub.decrypt({ name: 'AES-GCM', iv: unb64u(a.n), additionalData: bildKontext(sid, rid) }, r.schluessel, chiffrat).then(function (d) { return new Uint8Array(d); });
         },
@@ -368,11 +410,11 @@
   function gruppenNameEntschluesseln(text, o) {
     var u;
     try { u = umschlagLesen(text, o); } catch (e) { return Promise.reject(e); }
-    if (u.v !== 1) return Promise.reject(new Error('Unbekannte Fassung.'));
+    if (u.v !== 1) return Promise.reject(new Error('Unknown version.'));
     return oeffnen(u, gruppenNameKontext(String(o.von), u.s), o).then(function (r) {
       var name = gruppenNamePruefen(dec.decode(r.klar));
-      if (!name) throw new Error('Kein Name.');
-      return { name: name, absenderSchluessel: u.s, ziele: Object.keys(u.k) };
+      if (!name) throw new Error('Not a name.');
+      return { name: name, absenderSchluessel: u.s, ziele: Object.keys(u.k), gebunden: r.gebunden };
     });
   }
 

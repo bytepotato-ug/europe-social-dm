@@ -1,26 +1,15 @@
 # Gerät koppeln: Protokoll (Deutsch)
 
-Deutscher Originaltext aus dem europe.social-Repo. Eine englische Zusammenfassung steht in
-[PROTOCOL.md](PROTOCOL.md#33-pairing-a-device). Referenz der Krypto: `public/javascripts/dmcrypto.js`.
+Deutscher Originaltext aus dem europe.social-Repo, gekürzt um die Teile zur Oberfläche. Eine englische Zusammenfassung
+steht in [PROTOCOL.md](PROTOCOL.md#33-pairing-a-device). Referenz der Krypto: `public/javascripts/dmcrypto.js`.
 
-## DMs entsperren: Passkey verknüpfen, Gerät koppeln (seit 2026-11-15)
+Worum es geht: Ein Gerät, auf dem die Direktnachrichten offen sind, gibt den DM-Schlüssel an ein neues Gerät desselben
+Kontos weiter, Ende-zu-Ende über Einmal-Schlüssel. Der Server reicht nur die öffentlichen Hälften und das Chiffrat
+durch. Dass er nicht dazwischen sitzt, bestätigt der Mensch per Prüfzahl oder QR-Code. Daneben gibt es zwei Wege ohne
+zweites Gerät: den Passkey (jeder Passkey, der PRF liefert und noch keine Fassung hat, bekommt eine, sobald der
+Schlüssel auf einem Gerät offen ist) und den Wiederherstellungscode (PROTOCOL.md, Abschnitt 3).
 
-Anlass: Nach dem Domainwechsel auf europe.social galt kein alter Passkey mehr, der neue Passkey war mit
-den DMs nie verknüpft, und auf dem iPhone blieb nur der Wiederherstellungscode; die Karte begann mit „Oder …“, weil
-der Passkey-Knopf ausgeblendet war. Ziel: einfacher, ohne Sicherheit aufzugeben. Drei Teile, auf Web,
-iOS, Mac und Android gleich:
-
-1. **Passkeys von selbst verknüpfen.** Wo der DM-Schlüssel offen ist, wird jeder Passkey, der PRF liefert und noch
-   keine Fassung hat, sofort eingepackt (`POST /dm/keys`).
-2. **Klare Sperrkarte.** Der Passkey-Knopf ist immer da; ein noch nicht verknüpfter Passkey bekommt eine Erklärung statt
-   eines Rätsels. Kein Text beginnt mit „Oder“, wenn davor nichts steht.
-3. **Gerät koppeln.** Ein entsperrtes Gerät gibt den Schlüssel an ein neues Gerät desselben Kontos weiter,
-   Ende-zu-Ende über Einmal-Schlüssel; der Mensch bestätigt per Prüfzahl oder QR-Code.
-
-Sicherheit: Nichts davon gibt dem Server mehr als bisher. Fassungen für Passkeys entstehen nur aus deren PRF, die
-Kopplung nur über ECDH zwischen zwei Einmal-Schlüsseln, deren Echtheit der Mensch prüft.
-
-## 3. Gerät koppeln: Protokoll
+## Ablauf
 
 Rollen: **N** (neues Gerät, DMs gesperrt) und **A** (Gerät mit offenem DM-Schlüssel), beide im selben Konto
 angemeldet. Referenz der Krypto: `public/javascripts/dmcrypto.js` (`kopplungFp`, `kopplungZahl`, `kopplungEinpacken`,
@@ -44,7 +33,7 @@ war schon vorher sicher. Anfragen ohne Commitment (alte Fassungen) nimmt der Ser
 | 4 | A | Einmal-Paar eA, `POST /dm/pair/<id>/accept {pub}` (genau einmal und nur vor dem Offenlegen, sonst 409) |
 | 5 | N | sieht `peer`, legt offen: `POST /dm/pair/<id>/reveal {pub, nonce}` (genau einmal, nur nach der Annahme; der Server prüft das Commitment) |
 | 6 | A | wartet auf `pub` und `nonce`, prüft **selbst** `kopplungCommit(pub, nonce) == commit` aus Schritt 3 und, über den QR-Link, `kopplungFp(pub) == fp`; sonst „This code doesn’t match. Nothing was shared.“ und Abbruch |
-| 7 | beide | Prüfzahl = `kopplungZahl(pubN, pubA)` anzeigen. N wartet, A fragt „Zeigt dein anderes Gerät dieselbe Zahl?“. Kam A über den QR-Link und stimmt fp, ist die Zahl schon geprüft (A zeigt sie trotzdem) |
+| 7 | beide | Prüfzahl = `kopplungZahl(pubN, pubA)` anzeigen. N wartet, A fragt „Zeigt dein anderes Gerät dieselbe Zahl?“. Kam A über den QR-Link und stimmt fp, weiß A schon, dass pubN echt ist, und fragt nur noch, ob das Gerät hinzugefügt werden soll (A zeigt die Zahl trotzdem) |
 | 8 | A | nach „Ja“: `kopplungEinpacken(dmPrivat, eA, pubN, pubA, uid, id)` → `POST /dm/pair/<id>/key {wrapped}` (erst nach dem Offenlegen) |
 | 9 | N | sieht `wrapped`, `kopplungAuspacken(wrapped, eN, pubN, pubA, uid, id)`, prüft den öffentlichen Schlüssel gegen `/dm/keys/me` (`publicKey`), speichert wie nach dem Code, `POST /dm/pair/<id>/delete` |
 
@@ -68,3 +57,16 @@ Server prüft Formate, Reihenfolge und das Commitment; maßgeblich ist die Prüf
 Warum kein Geheimnis im QR-Code: Er trägt nur den Fingerabdruck des Einmal-Schlüssels von N. Der Server kennt ihn auch;
 entscheidend ist, dass A ihn **vom Bildschirm von N** bekommt und nicht vom Server. Darum zeichnet jedes Gerät seinen
 QR-Code selbst, nie der Server.
+
+## Was das neue Gerät nicht prüft (bekannte Grenze, Stand 2026-11-19)
+
+Die Prüfzahl und der QR-Code schützen das Gerät A: Es gibt den Schlüssel nur heraus, wenn der Mensch bestätigt hat.
+Das neue Gerät N fragt bisher niemanden. Es nimmt den Schlüssel an, der unter dem ausgehandelten Einmal-Schlüssel
+ankommt, und vergleicht ihn mit dem öffentlichen Schlüssel, den der Server für das Konto nennt (`/dm/keys/me`). Ein
+bösartiger Server könnte eine Kopplungsanfrage deshalb selbst beantworten und N einen eigenen Schlüssel geben. Den
+echten Schlüssel bekommt er so nicht, aber was N danach sendet, könnte er lesen; Kontakte mit gemerktem Schlüssel sähen
+„sender key changed“. Über den QR-Weg weiß A, dass pubN echt ist, N weiß aber nicht, dass pubA echt ist.
+
+Abhilfe (in Arbeit): Auch N fragt seinen Menschen, ob das andere Gerät dieselbe Zahl zeigt, bevor es einen Schlüssel
+annimmt. Die Zahl hängt an beiden Einmal-Schlüsseln; ein untergeschobener Schlüssel ergibt eine andere Zahl, und ohne
+ein zweites Gerät, das überhaupt eine Zahl zeigt, gibt es nichts zu bestätigen.

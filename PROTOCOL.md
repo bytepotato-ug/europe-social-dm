@@ -18,7 +18,9 @@ Identifiers in the code are German. A short glossary is at the end.
 
 - The server stores and forwards DMs but cannot read their content: text, pictures, voice messages, replies (quotes),
   reactions and group names.
-- A message can only be created in the name of an account by someone holding that account's private key.
+- A message can only be created in the name of an account by someone holding that account's private key, and what
+  arrives is what that account wrote ([4.3](#43-binding-the-wraps-to-the-content), with the limits in
+  [9.6](#96-no-signatures-deniability-and-messages-without-binding)).
 - Users can check that they talk to the right key (safety number) and are warned when a contact's key changes.
 - Losing a device does not lose the messages: the key can be unlocked with a passkey, a recovery code, or handed
   over from another device.
@@ -38,10 +40,16 @@ Identifiers in the code are German. A short glossary is at the end.
 | Hashing | SHA-256 |
 | Encoding | base64url without padding; public keys as uncompressed points (65 bytes, 87 characters) |
 
-All primitives come from the platform: WebCrypto in browsers, CryptoKit on Apple platforms, the Java standard
-library (JCA) on Android. Every derivation and every AES-GCM call is bound to a context string that names its purpose
-and, where it matters, the account and conversation (for example `cs-dm-v1|<sender>|<recipient>|<sender key>`), so a
-ciphertext cannot be moved into another context without failing authentication.
+The primitives come from the platform: WebCrypto in browsers, CryptoKit on Apple platforms, the Java standard
+library (JCA) on Android. No third-party cryptography library is used. Two things JCA does not offer are written out in
+[`Krypto.kt`](android/kern/src/main/kotlin/com/bytepotato/europesocial/kern/Krypto.kt): HKDF (RFC 5869, a few lines
+over the platform's HMAC) and deriving the public key from a private key that was just unwrapped (one point
+multiplication on P-256 with `BigInteger`, not constant time; it runs once, locally, when a key is imported, and its
+result is compared with the public key the account is known by).
+
+Every derivation and every AES-GCM call is bound to a context string that names its purpose and, where it matters,
+the account and conversation (for example `cs-dm-v1|<sender>|<recipient>|<sender key>`), so a ciphertext cannot be
+moved into another context without failing authentication.
 
 ## 3. Account key
 
@@ -105,9 +113,27 @@ other devices). For each target with public key P:
 4. `w = AES-GCM(KEK, iv2, K)`
 
 `z2` binds the sender's long-term key: only someone holding S (or the recipient's own private key, see
-[9.6](#96-no-signatures-deniability)) can produce a wrap that opens.
+[9.6](#96-no-signatures-deniability-and-messages-without-binding)) can produce a wrap that opens.
 
-### 4.3 Envelope
+### 4.3 Binding the wraps to the content
+
+A wrap only says "S gave K to this recipient". K itself is known to every recipient, so without a further step a
+recipient could encrypt different content under K and reuse the sender's wraps for the other recipients. Since
+2026-11-19 every wrap therefore carries a tag over the visible parts of the envelope:
+
+1. `BK = HKDF(ikm = z2, salt = E public key, info = context "|" <target account> "|bind-v1")`
+2. `t = HMAC-SHA-256(BK, "cs-dm-bind-v1|" v "|" n "|" c "|" <attachment ids joined by ",">)`
+
+BK comes from `z2 = ECDH(S, P)` alone, so only the sender and this one recipient can compute it. The receiving client
+recomputes `t` before it decrypts anything; if it does not match, the message is rejected. The tag covers the version
+`v`, the IV `n`, the ciphertext `c` and the attachment list `b`, so none of them can be altered. The same applies to
+reactions and group names, which use the same envelope. Implemented in `bindeText`, `bindeSchluessel`, `versiegeln`
+and `oeffnen`; `entschluesseln` reports for every message whether it was bound (`gebunden`).
+
+Clients released before 2026-11-19 neither send nor check `t`; they ignore the field. What that means during the
+transition is in [9.6](#96-no-signatures-deniability-and-messages-without-binding).
+
+### 4.4 Envelope
 
 ```json
 {
@@ -115,31 +141,32 @@ other devices). For each target with public key P:
   "s": "<sender public key>",
   "n": "<iv>",
   "c": "<ciphertext>",
-  "k": { "<account>": { "e": "<ephemeral public key>", "n": "<iv2>", "w": "<wrapped K>" } }
+  "k": { "<account>": { "e": "<ephemeral public key>", "n": "<iv2>", "w": "<wrapped K>", "t": "<binding tag>" } }
 }
 ```
 
-Version 2 adds `"b": [<attachment ids>]` (see 4.4). The receiving client checks that `s` is the key it has pinned for
+Version 2 adds `"b": [<attachment ids>]` (see 4.5). The receiving client checks that `s` is the key it has pinned for
 the sender (section 7) before showing the message as genuine.
 
 The server checks the shape of every envelope before storing it (excerpt in [SERVER.md](SERVER.md)): `s` must equal
 the sender's registered public key, and the set of accounts in `k` must be exactly the participants of the
-conversation. It cannot check anything inside.
+conversation. It cannot check anything inside, and it cannot recompute `t`.
 
-### 4.4 Pictures and voice messages
+### 4.5 Pictures and voice messages
 
 Each file is encrypted with the same K and its own IV, AAD `cs-dm-bild-v1|<sender>|<recipient>`, and uploaded as
 ciphertext. ID, IV, type, dimensions, duration and alt text travel inside the encrypted message. The envelope lists
 only the attachment IDs (`b`) so the server can control access and delete files with the message. A swapped or foreign
 file fails authentication because its IV belongs to it.
 
-### 4.5 Replies, edits, reactions, group names
+### 4.6 Replies, edits, reactions, group names
 
 - **Replies:** the quoted message number, author and a short excerpt are inside the encrypted content.
 - **Edits:** the sender re-encrypts with the same K, so attached pictures stay readable.
 - **Reactions:** one emoji per person and message, encrypted like a message with the context
   `cs-dm-reaktion-v1|<message>|<reacting account>|<conversation>|<key>`, so a reaction cannot be moved to another
-  message (`reaktionVerschluesseln`).
+  message (`reaktionVerschluesseln`). The emoji is padded with spaces to a fixed 48 bytes, so every reaction has the
+  same ciphertext size (since 2026-11-19; before that the size gave away which group of emoji it was).
 - **Group names:** encrypted for all members with the context `cs-dm-gname-v1|<sealing account>|<key>`
   (`gruppenNameVerschluesseln`). See [9.7](#97-group-name-not-bound-to-the-group).
 
@@ -170,13 +197,20 @@ that Apple's push service sees only ciphertext; the tag Apple sees is an HMAC, n
 
 The server stores and therefore knows:
 
-- who sends a message to whom, and when; read state;
+- who sends a message to whom, and when; that and when a message was edited or deleted; read state;
+- typing notices and read receipts as they pass through, if the account has them switched on, and each account's
+  settings for them and for who may send it DMs;
+- which conversations and groups an account has muted;
 - the rough size class of each message (padding), the number and size of attachments;
-- group membership, who added or removed whom, when someone left, the disappearing-message timer;
-- who reacted to which message and when (not which emoji);
+- group membership, who added or removed whom, when someone left, the disappearing-message timer and who set it;
+- who reacted to which message and when (not which emoji; reactions from clients released before 2026-11-19 are not
+  padded, their size narrows the emoji down to a group);
 - every account's public key and the wrapped copies of its private key (one per PRF passkey, one for the recovery
   code), which it cannot open;
-- short-lived pairing requests: two one-time public keys and the wrapped key, deleted after 10 minutes.
+- short-lived pairing requests: the commitment, two one-time public keys, the nonce, the name the new device gives
+  itself ("Firefox on Mac") and the wrapped key, deleted after 10 minutes.
+
+The tables are listed in [SERVER.md](SERVER.md).
 
 The server does **not** see: message text, quotes, attachments, voice messages, alt texts, which emoji was used,
 group names (see 9.7 for the exception), recovery codes, PRF outputs, private keys.
@@ -191,12 +225,22 @@ There is one long-term key per account and no ratchet. Whoever obtains an accoun
 or by obtaining both a wrapped copy and the passkey or recovery code) can read all past messages of that account that
 they can get hold of. Signal and similar protocols protect against this; we do not yet.
 
-### 9.2 The web app is delivered by the server
+### 9.2 The web app is delivered by the server, and only its crypto core is public
 
-In the browser, the code that encrypts is loaded from europe.social on every visit. A compromised or malicious server
-could deliver different code. Open source cannot prevent this by itself, it only makes it detectable:
-`tools/check-live.mjs` compares the file the server delivers with this repository. The iPhone, iPad, Mac and Android
-apps are distributed through the app stores and do not load code from the server.
+In the browser, all code is loaded from europe.social on every visit. A compromised or malicious server could deliver
+different code. Open source cannot prevent this. `tools/check-live.mjs` compares the one file in this repository that
+runs in the browser, `dmcrypto.js`, with what the server delivers to the machine that runs the check. That is all it
+shows:
+
+- The rest of the web client is not public: the page and its other scripts, which call this file, keep the unlocked
+  key in the browser (IndexedDB), remember contacts' keys and put the decrypted text on the screen. A changed copy of
+  those could read messages without touching `dmcrypto.js`.
+- A server could answer the check differently from a real visitor.
+
+So publishing this file lets you read and test how the encryption works; it does not prove what a given browser was
+sent. The page allows scripts only from europe.social itself (Content Security Policy, no inline scripts). The
+iPhone, iPad, Mac and Android apps are distributed through the app stores and do not load code from the server; their
+builds are not reproducible (see [README](README.md#is-this-really-the-code-that-runs)).
 
 ### 9.3 The server distributes public keys
 
@@ -213,11 +257,32 @@ but the change is not authenticated by the group's members cryptographically.
 
 See section 8. Padding hides exact lengths, not the existence, timing or participants of a message.
 
-### 9.6 No signatures, deniability
+### 9.6 No signatures, deniability, and messages without binding
 
-Messages are authenticated by the ECDH term `z2`, not by a signature. Other members of a group cannot forge a message
-from someone else, but the recipient of a wrap could construct a wrap for themselves that appears to come from the
-sender. There is therefore no proof a third party could verify that someone sent a message.
+Messages are authenticated by the ECDH term `z2` and the binding tag ([4.3](#43-binding-the-wraps-to-the-content)),
+not by a signature. The recipient of a wrap can compute everything the sender can for that one wrap, so they could
+construct a message to themselves that appears to come from the sender. There is therefore no proof a third party
+could verify that someone sent a message.
+
+**Messages without a binding tag.** Until 2026-11-19 no client sent the tag, and an earlier version of this document
+claimed that other members of a group cannot forge a message from someone else. That was wrong: anyone who had
+received a message knew its content key K and could encrypt other content under K, leaving the sender's wraps for
+the other recipients (and for the sender's own devices) in place. The result opened as a message from the sender.
+Storing such an envelope needs the server's help or write access to its database, because the server only accepts an
+envelope from the account named in `s`; but a server that helps is exactly what end-to-end encryption is meant to
+withstand. An outside review found this on 2026-11-18; the binding tag closes it for every message that carries one.
+
+What is still open during the transition:
+
+- App versions released before 2026-11-19 do not send the tag. Their messages, and every message stored before that
+  date, can still be altered as described.
+- Because such messages must stay readable, current clients accept an envelope without tags and report it as not
+  bound (`gebunden: false`). A malicious server could strip the tags from a new message to make it look like an old
+  one. The website and the apps do not show this difference to the user yet.
+
+Removing this needs two more steps, in this order: senders add tags to their old messages (the tag key is derived
+from `z2` alone so that this is possible afterwards), then clients refuse messages without tags. This section will
+say so when it is done.
 
 ### 9.7 Group name not bound to the group
 
@@ -230,6 +295,23 @@ history.
 ### 9.8 Disappearing messages
 
 The timer is enforced by the server, which deletes the ciphertext. Recipients may have kept a copy.
+
+### 9.9 Replay, order, withholding
+
+Nothing ties an envelope to its message number or to a time. The server assigns both. It could deliver an old
+message a second time, show messages in a different order or with a different time, withhold a message, an edit or
+a deletion, or bring back a reaction its author removed. It cannot change what a bound message says, move a message
+into another conversation, or attach a reaction to another message.
+
+### 9.10 The device that receives the key during pairing
+
+Pairing protects the device that hands the key over: it only does so after the human has compared the number or
+scanned the code ([3.3](#33-pairing-a-device)). The new device, in turn, accepts the key it is sent and checks it
+against the public key the server reports for the account. A malicious server could therefore answer a pairing
+request itself and hand the new device a key of its own; messages that device then sends would be readable by the
+server, and contacts who have the real key pinned would see a "sender key changed" warning. The server cannot obtain
+the real key this way. Fix in progress: the new device will also ask its user to confirm the number before it
+accepts a key.
 
 ## 10. Glossary
 
@@ -246,5 +328,15 @@ The timer is enforced by the server, which deletes the ciphertext. Recipients ma
 | `kopplung` | device pairing |
 | `pruefzahl`, `sicherheitsnummer`, `fingerabdruck` | check number, safety number, fingerprint |
 | `auffuellen` | pad |
+| `bindeText`, `bindeSchluessel`, `gebunden` | what the binding tag covers, its key, bound |
 | `saeubern` | sanitise text (control characters, invisible characters) |
 | `SchluesselMerken` | remembered (pinned) keys |
+
+## 11. Changes to the protocol
+
+| Date | Change |
+|---|---|
+| 2026-11-12 | Recovery code as a second way to unlock the key (3.2) |
+| 2026-11-15 | Pairing a device (3.3) |
+| 2026-11-16 | Pairing: the new device commits to its one-time key first (found in an internal review) |
+| 2026-11-19 | Wraps bound to the content (4.3); reactions padded to a fixed size (4.6); replies written by the Android code are readable in the Swift code (a missing field made the whole message unreadable); the Swift code accepts emoji made of several parts as reactions. Found in an outside review on 2026-11-18, the day this repository was published. |

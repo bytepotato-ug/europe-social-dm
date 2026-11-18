@@ -5,6 +5,8 @@ import Foundation
 /// Inhaltsschlüssel K (AES-256-GCM, Zusatzdaten = Kontext), K je Ziel eingepackt mit
 /// KEK = HKDF-SHA256(ECDH(E, P) ‖ ECDH(S, P), Salz = E roh, Info = Kontext|Ziel). Ziele sind Empfänger und Absender,
 /// in Gruppen alle Mitglieder. Bilder mit demselben K und eigenem IV. Geprüft gegen Vektoren aus dem Browser-Code.
+/// Seit 2026-11-19 trägt jede Hülle eine Bindung an den Inhalt (Feld t, HMAC über v, n, c, b mit einem Schlüssel aus
+/// ECDH(S, P)): Ohne sie könnte ein Empfänger, der K kennt, anderen Text unter die Hüllen des Absenders legen.
 public enum DmKrypto {
     public static let hoechstens = 1000
     public static let hoechstensBilder = 4
@@ -15,7 +17,7 @@ public enum DmKrypto {
 
     /// Sichtbarer Teil auf dem Server: v, s (Absender), n (IV), c (Chiffrat), k (je Ziel), b (Anhänge, nur v2)
     public struct Umschlag: Codable, Sendable {
-        public struct Eingepackt: Codable, Sendable { let e: String; let n: String; let w: String }
+        public struct Eingepackt: Codable, Sendable { let e: String; let n: String; let w: String; var t: String? = nil }
         let v: Int
         let s: String
         let n: String
@@ -58,6 +60,21 @@ public enum DmKrypto {
         public let t: String
         public let bild: Bool
         public init(id: Int, von: Int, t: String, bild: Bool) { self.id = id; self.von = von; self.t = t; self.bild = bild }
+        /// `bild` darf fehlen und gilt dann als false: Android ließ das Feld bis 2026-11-19 weg, wenn es false war,
+        /// und ohne diese Nachsicht war die ganze Antwort unlesbar.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(Int.self, forKey: .id)
+            von = try c.decode(Int.self, forKey: .von)
+            t = try c.decode(String.self, forKey: .t)
+            bild = try c.decodeIfPresent(Bool.self, forKey: .bild) ?? false
+        }
+
+        /// dmcrypto.js, zitatPruefen: gültige Nummern, Auszug bereinigt und auf 140 Zeichen (Codepunkte) gekürzt
+        func geprueft() -> Zitat? {
+            guard id > 0, von > 0 else { return nil }
+            return Zitat(id: id, von: von, t: String(String.UnicodeScalarView(DmKrypto.saeubern(t).unicodeScalars.prefix(140))), bild: bild)
+        }
     }
 
     /// Entschlüsselter Inhalt einer Nachricht
@@ -68,6 +85,8 @@ public enum DmKrypto {
         public let zitat: Zitat?
         /// Inhaltsschlüssel (zum Entschlüsseln der Anhänge und zum Bearbeiten mit gleichen Bildern)
         public let schluessel: SymmetricKey
+        /// Die Hülle trug eine gültige Bindung an genau diesen Inhalt (false bei Nachrichten älterer Fassungen)
+        public let gebunden: Bool
     }
 
     // MARK: Kontexte (Zusatzdaten und HKDF-Info)
@@ -94,32 +113,59 @@ public enum DmKrypto {
         HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: z1 + z2), salt: eph, info: Data("\(basis)|\(fuer)".utf8), outputByteCount: 32)
     }
 
+    // MARK: Bindung der Hülle an den Inhalt (dmcrypto.js, bindeText und bindeSchluessel)
+
+    static func bindeText(v: Int, n: String, c: String, b: [String]?) throws -> Data {
+        let liste = v == 2 ? (b ?? []) : []
+        guard !liste.contains(where: { $0.contains("|") || $0.contains(",") }) else { throw Fehler.unlesbar }
+        return Data("cs-dm-bind-v1|\(v)|\(n)|\(c)|\(liste.joined(separator: ","))".utf8)
+    }
+
+    /// Schlüssel nur aus z2 = ECDH(S, P): Absender und genau dieser Empfänger können ihn rechnen, sonst niemand
+    static func bindeSchluessel(_ z2: Data, eph: Data, basis: String, fuer: String) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: z2), salt: eph, info: Data("\(basis)|\(fuer)|bind-v1".utf8), outputByteCount: 32)
+    }
+
     /// klar mit K verschlüsseln und K für jedes Ziel ({ Kontonummer: öffentlicher Schlüssel }, Absender eingeschlossen) einpacken
     static func versiegeln(basis: String, klar: Data, privat: P256.KeyAgreement.PrivateKey, pub: String, ziele: [String: String],
                            v: Int, b: [String]?, schluessel: SymmetricKey? = nil) throws -> String {
         let k = schluessel ?? SymmetricKey(size: .bits256)
         let kiste = try AES.GCM.seal(klar, using: k, nonce: AES.GCM.Nonce(), authenticating: Data(basis.utf8))
         let kRoh = k.withUnsafeBytes { Data($0) }
+        let n = Data(kiste.nonce).b64u, c = (kiste.ciphertext + kiste.tag).b64u
+        let gebunden = try bindeText(v: v, n: n, c: c, b: b)
         var eingepackt: [String: Umschlag.Eingepackt] = [:]
         for (fuer, zielPub) in ziele {
             let p = try oeffentlich(zielPub)
             let eph = P256.KeyAgreement.PrivateKey()
             let ephRoh = eph.publicKey.x963Representation
-            let kk = kek(try ecdh(eph, p), try ecdh(privat, p), eph: ephRoh, basis: basis, fuer: fuer)
+            let z2 = try ecdh(privat, p)
+            let kk = kek(try ecdh(eph, p), z2, eph: ephRoh, basis: basis, fuer: fuer)
             let w = try AES.GCM.seal(kRoh, using: kk, nonce: AES.GCM.Nonce())
-            eingepackt[fuer] = .init(e: ephRoh.b64u, n: Data(w.nonce).b64u, w: (w.ciphertext + w.tag).b64u)
+            let t = Data(HMAC<SHA256>.authenticationCode(for: gebunden, using: bindeSchluessel(z2, eph: ephRoh, basis: basis, fuer: fuer)))
+            eingepackt[fuer] = .init(e: ephRoh.b64u, n: Data(w.nonce).b64u, w: (w.ciphertext + w.tag).b64u, t: t.b64u)
         }
-        let u = Umschlag(v: v, s: pub, n: Data(kiste.nonce).b64u, c: (kiste.ciphertext + kiste.tag).b64u, k: eingepackt, b: b)
+        let u = Umschlag(v: v, s: pub, n: n, c: c, k: eingepackt, b: b)
         return String(decoding: try JSONEncoder().encode(u), as: UTF8.self)
     }
 
-    static func oeffnen(_ u: Umschlag, basis: String, ich: Int, privat: P256.KeyAgreement.PrivateKey) throws -> (Data, SymmetricKey) {
+    /// Liefert Klartext, Inhaltsschlüssel und ob die Hülle an genau diesen Inhalt gebunden war. Trägt die Hülle eine
+    /// Bindung, die nicht passt, wurde der Umschlag verändert: Fehler.
+    static func oeffnen(_ u: Umschlag, basis: String, ich: Int, privat: P256.KeyAgreement.PrivateKey) throws -> (Data, SymmetricKey, Bool) {
         guard let mein = u.k[String(ich)], let ephRoh = Data(b64u: mein.e) else { throw Fehler.nichtFuerMich }
-        let kk = kek(try ecdh(privat, try oeffentlich(mein.e)), try ecdh(privat, try oeffentlich(u.s)), eph: ephRoh, basis: basis, fuer: String(ich))
+        let z2 = try ecdh(privat, try oeffentlich(u.s))
+        var gebunden = false
+        if let t = mein.t {
+            guard let soll = Data(b64u: t),
+                  HMAC<SHA256>.isValidAuthenticationCode(soll, authenticating: try bindeText(v: u.v, n: u.n, c: u.c, b: u.b),
+                                                         using: bindeSchluessel(z2, eph: ephRoh, basis: basis, fuer: String(ich))) else { throw Fehler.unlesbar }
+            gebunden = true
+        }
+        let kk = kek(try ecdh(privat, try oeffentlich(mein.e)), z2, eph: ephRoh, basis: basis, fuer: String(ich))
         let kRoh = try AES.GCM.open(try kiste(mein.n, mein.w), using: kk)
         let k = SymmetricKey(data: kRoh)
         let klar = try AES.GCM.open(try kiste(u.n, u.c), using: k, authenticating: Data(basis.utf8))
-        return (klar, k)
+        return (klar, k, gebunden)
     }
 
     static func kiste(_ iv: String, _ c: String) throws -> AES.GCM.SealedBox {
@@ -144,6 +190,7 @@ public enum DmKrypto {
         guard a.count == anhaenge.count, a.count <= hoechstensBilder else { throw Fehler.unlesbar }
         guard !t.isEmpty || !a.isEmpty else { throw Fehler.leer }
         if !a.isEmpty && schluessel == nil { throw Fehler.schluessel }
+        let zitat = try zitat.map { z -> Zitat in guard let g = z.geprueft() else { throw Fehler.unlesbar }; return g }
         var alle = Dictionary(uniqueKeysWithValues: ziele.map { (String($0.key), $0.value) })
         alle[String(sid)] = pub
         let mitJson = !a.isEmpty || zitat != nil
@@ -170,7 +217,7 @@ public enum DmKrypto {
     public static func entschluesseln(_ umschlag: String, ich: Int, sid: Int, rid: String, privat: P256.KeyAgreement.PrivateKey) throws -> Inhalt {
         let u = try lesen(umschlag, ich: ich)
         guard u.v == 1 || u.v == 2 else { throw Fehler.unbekannteFassung }
-        let (klar, k) = try oeffnen(u, basis: kontext(sid: String(sid), rid: rid, s: u.s), ich: ich, privat: privat)
+        let (klar, k, gebunden) = try oeffnen(u, basis: kontext(sid: String(sid), rid: rid, s: u.s), ich: ich, privat: privat)
         guard var text = String(data: klar, encoding: .utf8) else { throw Fehler.unlesbar }
         var anhaenge: [Anhang] = [], zitat: Zitat?
         if u.v == 2 {
@@ -179,9 +226,9 @@ public enum DmKrypto {
             text = j.t ?? ""
             let sichtbar = Set(u.b ?? [])
             anhaenge = Array((j.a ?? []).compactMap { $0.geprueft() }.filter { sichtbar.contains($0.id) }.prefix(hoechstensBilder))
-            zitat = j.q.flatMap { $0.id > 0 && $0.von > 0 ? Zitat(id: $0.id, von: $0.von, t: String(saeubern($0.t).prefix(140)), bild: $0.bild) : nil }
+            zitat = j.q.flatMap { $0.geprueft() }
         }
-        return Inhalt(text: saeubern(text), absenderSchluessel: u.s, anhaenge: anhaenge, zitat: zitat, schluessel: k)
+        return Inhalt(text: saeubern(text), absenderSchluessel: u.s, anhaenge: anhaenge, zitat: zitat, schluessel: k, gebunden: gebunden)
     }
 
     // MARK: Gruppennamen
@@ -196,7 +243,7 @@ public enum DmKrypto {
     public static func gruppenNameEntschluesseln(_ umschlag: String, ich: Int, von: Int, privat: P256.KeyAgreement.PrivateKey) throws -> (name: String, absenderSchluessel: String) {
         let u = try lesen(umschlag, ich: ich)
         guard u.v == 1 else { throw Fehler.unbekannteFassung }
-        let (klar, _) = try oeffnen(u, basis: gruppenNameKontext(von: von, s: u.s), ich: ich, privat: privat)
+        let (klar, _, _) = try oeffnen(u, basis: gruppenNameKontext(von: von, s: u.s), ich: ich, privat: privat)
         guard let roh = String(data: klar, encoding: .utf8) else { throw Fehler.unlesbar }
         let name = String(String.UnicodeScalarView(saeubern(roh).unicodeScalars.prefix(hoechstensGruppenname))).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw Fehler.leer }
@@ -233,13 +280,20 @@ public enum DmKrypto {
         guard let e = emojiPruefen(emoji) else { throw Fehler.unlesbar }
         var alle = Dictionary(uniqueKeysWithValues: ziele.map { (String($0.key), $0.value) })
         alle[String(sid)] = pub
-        return try versiegeln(basis: reaktionsKontext(mid: mid, sid: sid, konv: konv, s: pub), klar: Data(e.utf8), privat: privat, pub: pub, ziele: alle, v: 1, b: nil)
+        return try versiegeln(basis: reaktionsKontext(mid: mid, sid: sid, konv: konv, s: pub), klar: reaktionAuffuellen(Data(e.utf8)), privat: privat, pub: pub, ziele: alle, v: 1, b: nil)
+    }
+
+    /// Länge verstecken wie im Browser (dmcrypto.js, reaktionAuffuellen): mit Leerzeichen auf feste 48 Bytes, sonst
+    /// verriete die Größe des Chiffrats, aus welcher Gruppe das Emoji stammt. Alle Fassungen schneiden beim Lesen ab.
+    static let reaktionBytes = 48
+    static func reaktionAuffuellen(_ d: Data) -> Data {
+        d.count >= reaktionBytes ? d : d + Data(repeating: 0x20, count: reaktionBytes - d.count)
     }
 
     public static func reaktionEntschluesseln(_ umschlag: String, ich: Int, mid: Int, sid: Int, konv: String, privat: P256.KeyAgreement.PrivateKey) throws -> String {
         let u = try lesen(umschlag, ich: ich)
         guard u.v == 1 else { throw Fehler.unbekannteFassung }
-        let (klar, _) = try oeffnen(u, basis: reaktionsKontext(mid: mid, sid: sid, konv: konv, s: u.s), ich: ich, privat: privat)
+        let (klar, _, _) = try oeffnen(u, basis: reaktionsKontext(mid: mid, sid: sid, konv: konv, s: u.s), ich: ich, privat: privat)
         guard let e = emojiPruefen(String(decoding: klar, as: UTF8.self)) else { throw Fehler.unlesbar }
         return e
     }
@@ -247,7 +301,11 @@ public enum DmKrypto {
     /// Genau ein Emoji (ein Graphem mit Bildzeichen, Flagge oder Tastenkappe)
     public static func emojiPruefen(_ roh: String) -> String? {
         let e = roh.precomposedStringWithCanonicalMapping.trimmingCharacters(in: .whitespaces)
-        guard !e.isEmpty, e.utf16.count <= 32, e.count == 1, e.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil else { return nil }
+        // Leerraum und Steuerzeichen wie im Browser (/[\s\u0000-\u001F]/). Nicht CharacterSet.controlCharacters: das enthält
+        // auch die Formatzeichen (Cf) und damit den Verbinder U+200D, aus dem Familien, Berufe und 🏳️‍🌈 bestehen; bis
+        // 2026-11-19 lehnte iOS deshalb jede solche Reaktion ab, die Web und Android annahmen.
+        let verboten = e.unicodeScalars.contains { $0.properties.isWhitespace || $0.properties.generalCategory == .control || $0 == "\u{FEFF}" }
+        guard !e.isEmpty, e.utf16.count <= 32, e.count == 1, !verboten else { return nil }
         // wie im Browser: /\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|\u20E3/u (ICU kennt dieselben Klassen)
         let bild = e.range(of: #"\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|\u20E3"#, options: .regularExpression) != nil
         return bild ? e : nil

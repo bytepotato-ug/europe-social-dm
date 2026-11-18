@@ -5,6 +5,12 @@
 // It loads the start page the way a browser does, takes the address of dmcrypto.js from it, downloads that file and
 // compares its SHA-256 with public/javascripts/dmcrypto.js here. The page links the file as dmcrypto.js?v=<first 12
 // hex digits of its SHA-256>, so the check also confirms that the version marker matches the content.
+//
+// What this does and does not show: it covers this one file, as delivered to the machine it runs on at this moment.
+// The rest of the web client (the page and its other scripts, which hold the key and show the text) is not public and
+// not covered. A server that wanted to cheat could also answer this script differently from a browser; it sends an
+// ordinary browser's request headers so that is not trivial, but a determined server can tell. Run it from your own
+// network if you want your own answer. See PROTOCOL.md, section 9.2.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -12,10 +18,16 @@ const SEITE = process.env.EUROPE_SOCIAL_URL || 'https://europe.social/';
 const sha = b => createHash('sha256').update(b).digest('hex');
 const hier = sha(readFileSync(new URL('../public/javascripts/dmcrypto.js', import.meta.url)));
 
-const html = await (await fetch(SEITE, { headers: { 'user-agent': 'europe-social-dm check-live' } })).text();
+// The same headers a current Firefox sends for a page it navigates to
+const KOPF = {
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'accept-language': 'en-US,en;q=0.5',
+};
+const html = await (await fetch(SEITE, { headers: KOPF })).text();
 const m = html.match(/src="(\/javascripts\/dmcrypto\.js\?v=([0-9a-f]+))"/);
 if (!m) { console.error(`No dmcrypto.js found on ${SEITE}`); process.exit(2); }
-const antwort = await fetch(new URL(m[1], SEITE), { headers: { 'user-agent': 'europe-social-dm check-live' } });
+const antwort = await fetch(new URL(m[1], SEITE), { headers: { ...KOPF, accept: '*/*', referer: SEITE } });
 const live = sha(Buffer.from(await antwort.arrayBuffer()));
 
 console.log(`repository: ${hier}`);

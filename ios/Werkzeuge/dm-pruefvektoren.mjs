@@ -52,6 +52,16 @@ const rx = await dm.reaktionVerschluesseln({ emoji: '❤️', mid: 42, sid: Bn, 
 // Eingepackter Schlüssel (PRF fest)
 const prf = new Uint8Array(32).map((_, i) => i);
 const gepackt = await dm.einpacken(ada.privat, prf, A, 'cred-ada');
+// Bindung (seit 2026-11-19): Bob kennt als Empfänger den Inhaltsschlüssel der Gruppennachricht und legt anderen Text
+// unter Adas Hüllen. Mit Bindung (Feld t) muss das bei Cleo scheitern; ohne t (ältere Fassungen) geht der Umschlag noch auf
+// und gilt als nicht gebunden. Dazu die v1-Nachricht ohne t, so wie ältere Fassungen sie schicken.
+const ohneT = text => { const u = JSON.parse(text); for (const z of Object.keys(u.k)) delete u.k[z].t; return JSON.stringify(u); };
+const bobPrivat = await importPrivat(await pkcs8(bob.privat));
+const echt = await dm.entschluesseln(g, { ich: Bn, sid: A, rid: 'g9', privat: bobPrivat });
+const kGruppe = await sub.importKey('raw', echt.schluesselRoh, 'AES-GCM', false, ['encrypt']);
+const ug = JSON.parse(g), ivF = globalThis.crypto.getRandomValues(new Uint8Array(12));
+const cF = await sub.encrypt({ name: 'AES-GCM', iv: ivF, additionalData: new TextEncoder().encode('cs-dm-v1|' + A + '|g9|' + ug.s) }, kGruppe, new TextEncoder().encode('Nicht von Ada'));
+const gefaelscht = JSON.stringify({ ...ug, n: dm.b64u(ivF), c: dm.b64u(cF) });
 // Wiederherstellungscode: fester Code (Bytes 0…19) und ein mit ihm eingepackter Schlüssel
 const codeRoh = new Uint8Array(20).map((_, i) => i * 13 + 7);
 const codeGepackt = await dm.codeEinpacken(ada.privat, codeRoh, A);
@@ -64,6 +74,7 @@ const vektoren = {
   v1: { umschlag: v1, text: 'Hallo Bob 👋' },
   v2: { umschlag: v2, text: 'Mit Bild', bildChiffrat: dm.b64u(bild.daten), bildKlar: dm.b64u(bildKlar) },
   gruppe: { umschlag: g, rid: 'g9', text: 'An alle' },
+  bindung: { ohne: ohneT(v1), gefaelscht, gefaelschtOhne: ohneT(gefaelscht), gefaelschtText: 'Nicht von Ada' },
   gruppenname: { umschlag: gn, von: A, name: gruppenName },
   reaktion: { umschlag: rx, mid: 42, sid: Bn, konv: 'p2-3', emoji: '❤️' },
   einpacken: { prf: dm.b64u(prf), uid: A, credId: 'cred-ada', gepackt },

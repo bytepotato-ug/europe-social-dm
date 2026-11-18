@@ -187,7 +187,7 @@ class DmKryptoTest {
         assertEquals(setOf("v", "s", "n", "c", "k", "b"), j.keys)
         assertEquals(setOf(ada.id.toString(), bob.id.toString()), (j["k"] as kotlinx.serialization.json.JsonObject).keys)
         val ziel = (j["k"] as kotlinx.serialization.json.JsonObject)[bob.id.toString()] as kotlinx.serialization.json.JsonObject
-        assertEquals(setOf("e", "n", "w"), ziel.keys)
+        assertEquals(setOf("e", "n", "w", "t"), ziel.keys)
         val v1 = kernJson.parseToJsonElement(DmKrypto.verschluesseln("nur Text", sid = ada.id, rid = bob.id.toString(), privat = ada.schluessel, pub = ada.oeffentlich, ziele = mapOf(bob.id to bob.oeffentlich))) as kotlinx.serialization.json.JsonObject
         assertEquals(setOf("v", "s", "n", "c", "k"), v1.keys)
 
@@ -203,6 +203,54 @@ class DmKryptoTest {
             assertEquals(0, code, aus)
             assertTrue("alles lesbar" in aus, aus)
         } finally { datei.delete() }
+    }
+
+    /**
+     * Bindung der Hülle an den Inhalt (seit 2026-11-19): Wer als Empfänger den Inhaltsschlüssel kennt, kann keinen anderen
+     * Text unter die Hüllen des Absenders legen, und die sichtbaren Felder v und b sind mitgesichert.
+     */
+    @Test fun bindungAnDenInhalt() {
+        fun lesen(u: String) = DmKrypto.entschluesseln(u, bob.id, ada.id, bob.id.toString(), bob.schluessel)
+        assertTrue(lesen(TestDaten.feld("v1", "umschlag")).gebunden)
+        // Ältere Fassungen schicken keine Bindung: geht auf, gilt aber als nicht gebunden
+        val alt = lesen(TestDaten.feld("bindung", "ohne"))
+        assertEquals(TestDaten.feld("v1", "text"), alt.text)
+        assertTrue(!alt.gebunden)
+        // Bob legt anderen Text unter Adas Hüllen: scheitert bei Cleo, auf Adas eigenem Gerät und bei ihm selbst
+        val gefaelscht = TestDaten.feld("bindung", "gefaelscht")
+        for (p in listOf(cleo, ada, bob)) assertEquals(KryptoFehler.Art.UNLESBAR, art { DmKrypto.entschluesseln(gefaelscht, p.id, ada.id, "g9", p.schluessel) })
+        // Ohne Bindung (so sähe es aus, wenn jemand sie entfernt): lesbar, aber als nicht gebunden erkennbar
+        val f = DmKrypto.entschluesseln(TestDaten.feld("bindung", "gefaelschtOhne"), cleo.id, ada.id, "g9", cleo.schluessel)
+        assertEquals(TestDaten.feld("bindung", "gefaelschtText"), f.text)
+        assertTrue(!f.gebunden)
+        // Sichtbare Felder: Anhangliste geleert, Fassung von 2 auf 1 gestellt
+        val u = kernJson.parseToJsonElement(TestDaten.feld("v2", "umschlag")) as kotlinx.serialization.json.JsonObject
+        val ohneB = kotlinx.serialization.json.JsonObject(u + ("b" to kotlinx.serialization.json.JsonArray(emptyList())))
+        assertEquals(KryptoFehler.Art.UNLESBAR, art { lesen(ohneB.toString()) })
+        val alsV1 = kotlinx.serialization.json.JsonObject((u - "b") + ("v" to kotlinx.serialization.json.JsonPrimitive(1)))
+        assertEquals(KryptoFehler.Art.UNLESBAR, art { lesen(alsV1.toString()) })
+        // Was Kotlin selbst verschlüsselt, ist gebunden
+        assertTrue(lesen(DmKrypto.verschluesseln("aus Kotlin", sid = ada.id, rid = bob.id.toString(), privat = ada.schluessel, pub = ada.oeffentlich, ziele = mapOf(bob.id to bob.oeffentlich))).gebunden)
+    }
+
+    /** Antworten: das Feld bild steht immer im Zitat (Swift verlangte es bis 2026-11-19 und hielt die Antwort sonst für unlesbar) */
+    @Test fun zitatImmerMitBildFeld() {
+        assertEquals("""{"id":7,"von":3,"t":"Vorher","bild":false}""", kernJson.encodeToString(DmKrypto.Zitat.serializer(), DmKrypto.Zitat(7, 3, "Vorher")))
+        assertEquals(DmKrypto.Zitat(7, 3, "Vorher", false), kernJson.decodeFromString(DmKrypto.Zitat.serializer(), """{"id":7,"von":3,"t":"Vorher"}"""))
+        // Beim Verschlüsseln geprüft wie im Browser: Auszug auf 140 Zeichen, ungültige Nummer abgelehnt
+        val u = DmKrypto.verschluesseln("ja", zitat = DmKrypto.Zitat(7, bob.id, "ä".repeat(300)), sid = ada.id, rid = bob.id.toString(), privat = ada.schluessel, pub = ada.oeffentlich, ziele = mapOf(bob.id to bob.oeffentlich))
+        assertEquals(140, DmKrypto.entschluesseln(u, bob.id, ada.id, bob.id.toString(), bob.schluessel).zitat!!.t.length)
+        assertEquals(KryptoFehler.Art.UNLESBAR, art { DmKrypto.verschluesseln("ja", zitat = DmKrypto.Zitat(0, 3, "x"), sid = ada.id, rid = bob.id.toString(), privat = ada.schluessel, pub = ada.oeffentlich, ziele = mapOf(bob.id to bob.oeffentlich)) })
+    }
+
+    /** Reaktionen: jedes Emoji ergibt dasselbe Maß (48 Bytes und 16 für GCM), sonst verriete die Länge die Gruppe des Emojis */
+    @Test fun reaktionLaengeVersteckt() {
+        for (emoji in listOf("👍", "❤️", "✅", "👍🏽", "🇪🇺", "👨‍👩‍👧")) {
+            val rx = DmKrypto.reaktionVerschluesseln(emoji, 5, ada.id, "p2-3", ada.schluessel, ada.oeffentlich, mapOf(bob.id to bob.oeffentlich))
+            val c = (kernJson.parseToJsonElement(rx) as kotlinx.serialization.json.JsonObject)["c"]!!.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+            assertEquals(64, c.ausB64u()!!.size)
+            assertEquals(emoji, DmKrypto.reaktionEntschluesseln(rx, bob.id, 5, ada.id, "p2-3", bob.schluessel))
+        }
     }
 
     /** Gegenrichtung für den eingepackten Schlüssel: der Browser-Code packt aus, was Kotlin eingepackt hat */

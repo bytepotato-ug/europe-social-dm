@@ -3,6 +3,8 @@ package com.bytepotato.europesocial.kern
 import java.security.PrivateKey
 import java.text.BreakIterator
 import java.text.Normalizer
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
@@ -11,6 +13,8 @@ import kotlinx.serialization.encodeToString
  * ausführlich): Inhaltsschlüssel K (AES-256-GCM, Zusatzdaten = Kontext), K je Ziel eingepackt mit
  * KEK = HKDF-SHA256(ECDH(E, P) ‖ ECDH(S, P), Salz = E roh, Info = Kontext|Ziel). Ziele sind Empfänger und Absender,
  * in Gruppen alle Mitglieder. Bilder mit demselben K und eigenem IV. Geprüft gegen Vektoren aus dem Browser-Code.
+ * Seit 2026-11-19 trägt jede Hülle eine Bindung an den Inhalt (Feld t, HMAC über v, n, c, b mit einem Schlüssel aus
+ * ECDH(S, P)): Ohne sie könnte ein Empfänger, der K kennt, anderen Text unter die Hüllen des Absenders legen.
  */
 object DmKrypto {
     const val HOECHSTENS = 1000
@@ -25,7 +29,7 @@ object DmKrypto {
     internal class Umschlag(val v: Int, val s: String, val n: String, val c: String, val k: Map<String, Eingepackt>, val b: List<String>? = null)
 
     @Serializable
-    internal class Eingepackt(val e: String, val n: String, val w: String)
+    internal class Eingepackt(val e: String, val n: String, val w: String, val t: String? = null)
 
     /** Anhang im verschlüsselten Teil: Bild (typ, b, h, alt) oder Sprachnachricht (typ, d) */
     @Serializable
@@ -60,15 +64,26 @@ object DmKrypto {
         }
     }
 
-    /** Antwort auf eine bestimmte Nachricht: Nummer, Absender, kurzer Auszug */
+    /**
+     * Antwort auf eine bestimmte Nachricht: Nummer, Absender, kurzer Auszug. [bild] wird immer mitgeschrieben, auch wenn
+     * es false ist: Swift verlangte das Feld bis 2026-11-19 und hielt eine Antwort ohne es für unlesbar (kernJson lässt
+     * Vorgabewerte sonst weg).
+     */
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
-    data class Zitat(val id: Int, val von: Int, val t: String, val bild: Boolean = false)
+    data class Zitat(val id: Int, val von: Int, val t: String, @EncodeDefault val bild: Boolean = false) {
+        /** dmcrypto.js, zitatPruefen: gültige Nummern, Auszug bereinigt und auf 140 Zeichen (Codepunkte) gekürzt */
+        internal fun geprueft(): Zitat? = if (id > 0 && von > 0) Zitat(id, von, vorne(saeubern(t), HOECHSTENS_ZITAT), bild) else null
+    }
 
     @Serializable
     private class Teil(val t: String? = null, val a: List<Anhang>? = null, val q: Zitat? = null)
 
-    /** Entschlüsselter Inhalt einer Nachricht; [schluessel] (32 Byte) öffnet die Anhänge und dient dem Bearbeiten mit gleichen Bildern */
-    class Inhalt(val text: String, val absenderSchluessel: String, val anhaenge: List<Anhang>, val zitat: Zitat?, val schluessel: ByteArray)
+    /**
+     * Entschlüsselter Inhalt einer Nachricht; [schluessel] (32 Byte) öffnet die Anhänge und dient dem Bearbeiten mit gleichen
+     * Bildern. [gebunden]: die Hülle trug eine gültige Bindung an genau diesen Inhalt (false bei Nachrichten älterer Fassungen).
+     */
+    class Inhalt(val text: String, val absenderSchluessel: String, val anhaenge: List<Anhang>, val zitat: Zitat?, val schluessel: ByteArray, val gebunden: Boolean = false)
 
     // ---------- Kontexte (Zusatzdaten und HKDF-Info) ----------
 
@@ -87,6 +102,18 @@ object DmKrypto {
     private fun kek(z1: ByteArray, z2: ByteArray, eph: ByteArray, basis: String, fuer: String): ByteArray =
         Krypto.hkdf(z1 + z2, eph, "$basis|$fuer".toByteArray(), 32)
 
+    // ---------- Bindung der Hülle an den Inhalt (dmcrypto.js, bindeText und bindeSchluessel) ----------
+
+    internal fun bindeText(v: Int, n: String, c: String, b: List<String>?): ByteArray {
+        val liste = if (v == 2) b ?: emptyList() else emptyList()
+        if (liste.any { '|' in it || ',' in it }) throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
+        return "cs-dm-bind-v1|$v|$n|$c|${liste.joinToString(",")}".toByteArray()
+    }
+
+    /** Schlüssel nur aus z2 = ECDH(S, P): Absender und genau dieser Empfänger können ihn rechnen, sonst niemand */
+    internal fun bindeSchluessel(z2: ByteArray, eph: ByteArray, basis: String, fuer: String): ByteArray =
+        Krypto.hkdf(z2, eph, "$basis|$fuer|bind-v1".toByteArray(), 32)
+
     /** klar mit K verschlüsseln und K für jedes Ziel ({ Kontonummer: öffentlicher Schlüssel }, Absender eingeschlossen) einpacken */
     private fun versiegeln(
         basis: String, klar: ByteArray, privat: PrivateKey, pub: String, ziele: Map<String, String>,
@@ -95,29 +122,42 @@ object DmKrypto {
         val k = schluessel ?: neuerSchluessel()
         val iv = Krypto.zufallsBytes(12)
         val chiffrat = Krypto.gcmSiegeln(k, iv, klar, basis.toByteArray())
+        val gebunden = bindeText(v, iv.b64u, chiffrat.b64u, b)
         val eingepackt = LinkedHashMap<String, Eingepackt>()
         for ((fuer, zielPub) in ziele) {
             val p = Krypto.oeffentlichAusB64u(zielPub)
             val eph = Krypto.neuesPaar()
             val ephRoh = Krypto.oeffentlichRoh(eph.public)
-            val kk = kek(Krypto.ecdh(eph.private, p), Krypto.ecdh(privat, p), ephRoh, basis, fuer)
+            val z2 = Krypto.ecdh(privat, p)
+            val kk = kek(Krypto.ecdh(eph.private, p), z2, ephRoh, basis, fuer)
             val iv2 = Krypto.zufallsBytes(12)
             val w = Krypto.gcmSiegeln(kk, iv2, k)
-            eingepackt[fuer] = Eingepackt(ephRoh.b64u, iv2.b64u, w.b64u)
+            val t = Krypto.hmacSha256(bindeSchluessel(z2, ephRoh, basis, fuer), gebunden)
+            eingepackt[fuer] = Eingepackt(ephRoh.b64u, iv2.b64u, w.b64u, t.b64u)
         }
         return kernJson.encodeToString(Umschlag(v, pub, iv.b64u, chiffrat.b64u, eingepackt, b))
     }
 
-    private fun oeffnen(u: Umschlag, basis: String, ich: Int, privat: PrivateKey): Pair<ByteArray, ByteArray> {
+    private class Geoeffnet(val klar: ByteArray, val k: ByteArray, val gebunden: Boolean)
+
+    /**
+     * Liefert Klartext, Inhaltsschlüssel und ob die Hülle an genau diesen Inhalt gebunden war. Trägt die Hülle eine Bindung,
+     * die nicht passt, wurde der Umschlag verändert: UNLESBAR.
+     */
+    private fun oeffnen(u: Umschlag, basis: String, ich: Int, privat: PrivateKey): Geoeffnet {
         val mein = u.k[ich.toString()] ?: throw KryptoFehler(KryptoFehler.Art.NICHT_FUER_MICH)
         val ephRoh = mein.e.ausB64u() ?: throw KryptoFehler(KryptoFehler.Art.NICHT_FUER_MICH)
-        val kk = kek(
-            Krypto.ecdh(privat, Krypto.oeffentlichAusB64u(mein.e)), Krypto.ecdh(privat, Krypto.oeffentlichAusB64u(u.s)),
-            ephRoh, basis, ich.toString(),
-        )
+        val z2 = Krypto.ecdh(privat, Krypto.oeffentlichAusB64u(u.s))
+        var gebunden = false
+        if (mein.t != null) {
+            val soll = Krypto.hmacSha256(bindeSchluessel(z2, ephRoh, basis, ich.toString()), bindeText(u.v, u.n, u.c, u.b))
+            if (!java.security.MessageDigest.isEqual(soll, b64(mein.t))) throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
+            gebunden = true
+        }
+        val kk = kek(Krypto.ecdh(privat, Krypto.oeffentlichAusB64u(mein.e)), z2, ephRoh, basis, ich.toString())
         val k = Krypto.gcmOeffnen(kk, b64(mein.n), b64(mein.w))
         val klar = Krypto.gcmOeffnen(k, b64(u.n), b64(u.c), basis.toByteArray())
-        return klar to k
+        return Geoeffnet(klar, k, gebunden)
     }
 
     private fun b64(s: String): ByteArray = s.ausB64u() ?: throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
@@ -143,10 +183,11 @@ object DmKrypto {
         if (a.size != anhaenge.size || a.size > HOECHSTENS_BILDER) throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
         if (t.isEmpty() && a.isEmpty()) throw KryptoFehler(KryptoFehler.Art.LEER)
         if (a.isNotEmpty() && schluessel == null) throw KryptoFehler(KryptoFehler.Art.SCHLUESSEL)
+        val q = zitat?.let { it.geprueft() ?: throw KryptoFehler(KryptoFehler.Art.UNLESBAR) }
         val alle = ziele.entries.associate { it.key.toString() to it.value }.toMutableMap()
         alle[sid.toString()] = pub
-        val mitJson = a.isNotEmpty() || zitat != null
-        val klar = if (mitJson) kernJson.encodeToString(Teil(t, a.ifEmpty { null }, zitat)).toByteArray() else t.toByteArray()
+        val mitJson = a.isNotEmpty() || q != null
+        val klar = if (mitJson) kernJson.encodeToString(Teil(t, a.ifEmpty { null }, q)).toByteArray() else t.toByteArray()
         return versiegeln(kontext(sid.toString(), rid, pub), auffuellen(klar, if (mitJson) MAX_V2 else MAX_V1), privat, pub, alle, if (mitJson) 2 else 1, if (mitJson) a.map { it.id } else null, schluessel)
     }
 
@@ -165,7 +206,8 @@ object DmKrypto {
     fun entschluesseln(umschlag: String, ich: Int, sid: Int, rid: String, privat: PrivateKey): Inhalt {
         val u = lesen(umschlag, ich)
         if (u.v != 1 && u.v != 2) throw KryptoFehler(KryptoFehler.Art.UNBEKANNTE_FASSUNG)
-        val (klar, k) = oeffnen(u, kontext(sid.toString(), rid, u.s), ich, privat)
+        val g = oeffnen(u, kontext(sid.toString(), rid, u.s), ich, privat)
+        val klar = g.klar
         var text = try { klar.decodeToString(throwOnInvalidSequence = true) } catch (e: Exception) { throw KryptoFehler(KryptoFehler.Art.UNLESBAR, e) }
         var anhaenge = emptyList<Anhang>()
         var zitat: Zitat? = null
@@ -174,9 +216,9 @@ object DmKrypto {
             text = j.t ?: ""
             val sichtbar = (u.b ?: emptyList()).toSet()
             anhaenge = (j.a ?: emptyList()).mapNotNull { it.geprueft() }.filter { it.id in sichtbar }.take(HOECHSTENS_BILDER)
-            zitat = j.q?.takeIf { it.id > 0 && it.von > 0 }?.let { Zitat(it.id, it.von, vorne(saeubern(it.t), HOECHSTENS_ZITAT), it.bild) }
+            zitat = j.q?.geprueft()
         }
-        return Inhalt(saeubern(text), u.s, anhaenge, zitat, k)
+        return Inhalt(saeubern(text), u.s, anhaenge, zitat, g.k, g.gebunden)
     }
 
     // ---------- Gruppennamen ----------
@@ -194,7 +236,7 @@ object DmKrypto {
     fun gruppenNameEntschluesseln(umschlag: String, ich: Int, von: Int, privat: PrivateKey): GruppenName {
         val u = lesen(umschlag, ich)
         if (u.v != 1) throw KryptoFehler(KryptoFehler.Art.UNBEKANNTE_FASSUNG)
-        val (klar, _) = oeffnen(u, gruppenNameKontext(von, u.s), ich, privat)
+        val klar = oeffnen(u, gruppenNameKontext(von, u.s), ich, privat).klar
         val roh = try { klar.decodeToString(throwOnInvalidSequence = true) } catch (e: Exception) { throw KryptoFehler(KryptoFehler.Art.UNLESBAR, e) }
         val name = kappen(vorne(saeubern(roh), HOECHSTENS_GRUPPENNAME))
         if (name.isEmpty()) throw KryptoFehler(KryptoFehler.Art.LEER)
@@ -231,13 +273,18 @@ object DmKrypto {
         val e = emojiPruefen(emoji) ?: throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
         val alle = ziele.entries.associate { it.key.toString() to it.value }.toMutableMap()
         alle[sid.toString()] = pub
-        return versiegeln(reaktionsKontext(mid, sid, konv, pub), e.toByteArray(), privat, pub, alle, 1, null, null)
+        return versiegeln(reaktionsKontext(mid, sid, konv, pub), reaktionAuffuellen(e.toByteArray()), privat, pub, alle, 1, null, null)
     }
+
+    // Länge verstecken wie im Browser (dmcrypto.js, reaktionAuffuellen): mit Leerzeichen auf feste 48 Bytes, sonst verriete
+    // die Größe des Chiffrats, aus welcher Gruppe das Emoji stammt. Alle Fassungen schneiden beim Lesen ab.
+    private const val REAKTION_BYTES = 48
+    internal fun reaktionAuffuellen(d: ByteArray): ByteArray = if (d.size >= REAKTION_BYTES) d else d + ByteArray(REAKTION_BYTES - d.size) { 0x20 }
 
     fun reaktionEntschluesseln(umschlag: String, ich: Int, mid: Int, sid: Int, konv: String, privat: PrivateKey): String {
         val u = lesen(umschlag, ich)
         if (u.v != 1) throw KryptoFehler(KryptoFehler.Art.UNBEKANNTE_FASSUNG)
-        val (klar, _) = oeffnen(u, reaktionsKontext(mid, sid, konv, u.s), ich, privat)
+        val klar = oeffnen(u, reaktionsKontext(mid, sid, konv, u.s), ich, privat).klar
         return emojiPruefen(klar.decodeToString()) ?: throw KryptoFehler(KryptoFehler.Art.UNLESBAR)
     }
 
