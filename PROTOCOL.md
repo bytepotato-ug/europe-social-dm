@@ -305,13 +305,14 @@ into another conversation, or attach a reaction to another message.
 
 ### 9.10 The device that receives the key during pairing
 
-Pairing protects the device that hands the key over: it only does so after the human has compared the number or
-scanned the code ([3.3](#33-pairing-a-device)). The new device, in turn, accepts the key it is sent and checks it
-against the public key the server reports for the account. A malicious server could therefore answer a pairing
-request itself and hand the new device a key of its own; messages that device then sends would be readable by the
-server, and contacts who have the real key pinned would see a "sender key changed" warning. The server cannot obtain
-the real key this way. Planned, not built yet: the new device will also ask its user to confirm the number before it
-accepts a key.
+Pairing first protected only the device that hands the key over: it does so only after the human has compared the
+number or scanned the code ([3.3](#33-pairing-a-device)). Until 2026-11-19 the new device accepted any key that arrived
+under the negotiated one-time keys and checked it only against the public key the server reports for the account, so a
+malicious server could have answered a pairing request itself and handed the new device a key of its own.
+
+Since 2026-11-19 the new device also asks its user whether the other device shows the same number, and unwraps nothing
+before the answer is yes. A key slipped in by the server gives a different number. Status: in the browser since
+2026-11-19; the Android, iPhone, iPad and Mac apps get it with their next versions. Older app versions do not ask.
 
 ## 10. Glossary
 
@@ -339,4 +340,5 @@ accepts a key.
 | 2026-11-12 | Recovery code as a second way to unlock the key (3.2) |
 | 2026-11-15 | Pairing a device (3.3) |
 | 2026-11-16 | Pairing: the new device commits to its one-time key first (found in an internal review) |
+| 2026-11-19 | The new device confirms the number before it accepts a key during pairing (9.10; browser first, apps with their next versions) |
 | 2026-11-19 | Wraps bound to the content (4.3); reactions padded to a fixed size (4.6); replies written by the Android code are readable in the Swift code (a missing field made the whole message unreadable); the Swift code accepts emoji made of several parts as reactions. Found in an outside review on 2026-11-18, the day this repository was published. |

@@ -35,7 +35,7 @@ war schon vorher sicher. Anfragen ohne Commitment (alte Fassungen) nimmt der Ser
 | 6 | A | wartet auf `pub` und `nonce`, prüft **selbst** `kopplungCommit(pub, nonce) == commit` aus Schritt 3 und, über den QR-Link, `kopplungFp(pub) == fp`; sonst „This code doesn’t match. Nothing was shared.“ und Abbruch |
 | 7 | beide | Prüfzahl = `kopplungZahl(pubN, pubA)` anzeigen. N wartet, A fragt „Zeigt dein anderes Gerät dieselbe Zahl?“. Kam A über den QR-Link und stimmt fp, weiß A schon, dass pubN echt ist, und fragt nur noch, ob das Gerät hinzugefügt werden soll (A zeigt die Zahl trotzdem) |
 | 8 | A | nach „Ja“: `kopplungEinpacken(dmPrivat, eA, pubN, pubA, uid, id)` → `POST /dm/pair/<id>/key {wrapped}` (erst nach dem Offenlegen) |
-| 9 | N | sieht `wrapped`, `kopplungAuspacken(wrapped, eN, pubN, pubA, uid, id)`, prüft den öffentlichen Schlüssel gegen `/dm/keys/me` (`publicKey`), speichert wie nach dem Code, `POST /dm/pair/<id>/delete` |
+| 9 | N | sieht `wrapped`, fragt seinen Menschen, ob das andere Gerät dieselbe Zahl zeigt (seit 2026-11-19); erst nach „Ja“ `kopplungAuspacken(wrapped, eN, pubN, pubA, uid, id)`, prüft den öffentlichen Schlüssel gegen `/dm/keys/me` (`publicKey`), speichert wie nach dem Code, `POST /dm/pair/<id>/delete` |
 
 Krypto im Einzelnen:
 
@@ -58,15 +58,14 @@ Warum kein Geheimnis im QR-Code: Er trägt nur den Fingerabdruck des Einmal-Schl
 entscheidend ist, dass A ihn **vom Bildschirm von N** bekommt und nicht vom Server. Darum zeichnet jedes Gerät seinen
 QR-Code selbst, nie der Server.
 
-## Was das neue Gerät nicht prüft (bekannte Grenze, Stand 2026-11-19)
+## Bestätigung auch auf dem neuen Gerät (seit 2026-11-19)
 
-Die Prüfzahl und der QR-Code schützen das Gerät A: Es gibt den Schlüssel nur heraus, wenn der Mensch bestätigt hat.
-Das neue Gerät N fragt bisher niemanden. Es nimmt den Schlüssel an, der unter dem ausgehandelten Einmal-Schlüssel
-ankommt, und vergleicht ihn mit dem öffentlichen Schlüssel, den der Server für das Konto nennt (`/dm/keys/me`). Ein
-bösartiger Server könnte eine Kopplungsanfrage deshalb selbst beantworten und N einen eigenen Schlüssel geben. Den
-echten Schlüssel bekommt er so nicht, aber was N danach sendet, könnte er lesen; Kontakte mit gemerktem Schlüssel sähen
-„sender key changed“. Über den QR-Weg weiß A, dass pubN echt ist, N weiß aber nicht, dass pubA echt ist.
+Befund der Außenprüfung vom 2026-11-18: Die Prüfzahl und der QR-Code schützten nur das Gerät A. Das neue Gerät N nahm
+jeden Schlüssel an, der unter dem ausgehandelten Einmal-Schlüssel kam, und verglich ihn nur mit dem öffentlichen
+Schlüssel, den der Server nennt. Jetzt packt N erst aus, wenn sein Mensch bestätigt hat, dass das andere Gerät
+dieselbe Zahl zeigt („Does your other device show this number too?“, „Yes, same number“ / „No, different number“). Bei
+„No“ wird die Anfrage gelöscht und nichts abgelegt. Die Zahl rechnet N nur mit dem eigenen Einmal-Schlüssel und dem
+zuerst gesehenen pubA; ändert sich pubA danach, bricht N ab.
 
-Abhilfe (geplant, noch nicht gebaut): Auch N fragt seinen Menschen, ob das andere Gerät dieselbe Zahl zeigt, bevor es einen Schlüssel
-annimmt. Die Zahl hängt an beiden Einmal-Schlüsseln; ein untergeschobener Schlüssel ergibt eine andere Zahl, und ohne
-ein zweites Gerät, das überhaupt eine Zahl zeigt, gibt es nichts zu bestätigen.
+Stand am 2026-11-19: im Browser seit diesem Tag, in den Apps (Android, iPhone, iPad, Mac) mit der nächsten Version.
+Ältere App-Fassungen fragen nicht.
