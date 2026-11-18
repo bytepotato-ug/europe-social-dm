@@ -1,0 +1,22 @@
+{
+ "hinweis": "Erzeugt von ios/Werkzeuge/koppel-pruefvektoren.mjs mit public/javascripts/dmcrypto.js. Nur Testschlüssel.",
+ "uid": 7,
+ "id": "AbCdEfGhIjKlMnOpQrStUv",
+ "dm": {
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgXtmPxgtQ84zd8IUmbXnRrkqrvLJpMv_Ov04rA3u8ZDGhRANCAASCWb4pJqLT20_ZDMrq_cv0SSwOOPSPRHzrwZvGH7ESOVMxBGhFPNPRe8pWRwdEiBG3WgqRAFajFLn3pmU6ce31",
+  "oeffentlich": "BIJZvikmotPbT9kMyur9y_RJLA449I9EfOvBm8YfsRI5UzEEaEU809F7ylZHB0SIEbdaCpEAVqMUufemZTpx7fU"
+ },
+ "neu": {
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgIwBtrCP6fWmw_1Ivibs-5gvRFIe3GUKQeiZmoKyMe8-hRANCAAQLXR5huUBI_MH7iEabr3ASm8H9wkVVlPaM0Q14oJbjubmxaFyYTqMCAIaf6D50TJiTiSuYerXMMzUdvYD4w00X",
+  "oeffentlich": "BAtdHmG5QEj8wfuIRpuvcBKbwf3CRVWU9ozRDXigluO5ubFoXJhOowIAhp_oPnRMmJOJK5h6tcwzNR29gPjDTRc"
+ },
+ "alt": {
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg-nbxqVmp2Lfm9xnQj0aFkN5RDSuL51rUmHOQRYs4pEShRANCAAQjMk_T1Lv39EBlRYyBRHUGhYHmJvG8qjRP-BMWK-AFDWvA-n1Xo-Dy77HLJB1W4YjD5WOAGFpYVQGWtiNm6ltL",
+  "oeffentlich": "BCMyT9PUu_f0QGVFjIFEdQaFgeYm8byqNE_4ExYr4AUNa8D6fVej4PLvscskHVbhiMPlY4AYWlhVAZa2I2bqW0s"
+ },
+ "fingerabdruck": "22hnhA7RRYKXC1QL",
+ "nonce": "lFI0ZEgOlQPF2J6sDdm0Ug",
+ "commit": "Z4G7YazfRn0cxM86vesdlPgDXzfsuqe6IbKm-3tpZZ8",
+ "pruefzahl": "951722",
+ "wrapped": "ybnQutl9U8Nu0yHQ._Hq3xKQzPIcLETEk9zIgLbvAY6JCXzeHhfZOAfcIXtIHf99FV9YHwaVHe1if87wkRgprjrg_6GZWjIVJ7sB2YRb31h6Ob9qUa2jCk5GSUjFDNXW2BIyro8D7PsbbHAgnKcueHqPNSlrrEHKkClrTpJnDaPCT101tcdaVOnwqmpWk2y60AM69ijv9kUVrafCmDZd08Ay4h3YGdw"
+}

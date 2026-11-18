@@ -1,0 +1,59 @@
+{
+ "hinweis": "Erzeugt von ios/Werkzeuge/dm-pruefvektoren.mjs mit public/javascripts/dmcrypto.js. Nur Testschlüssel.",
+ "ada": {
+  "id": 2,
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg426P_oD5S8ke77wlES7kba_5ZwSFCaiA6p4ajshzGPahRANCAASkSypvYF9djOFek9rdQenuV4jO8G8R8NaOYRpltwj-Ank5nwcYiGX_BtEEys0sHqQrcmAIncylN8BNwY7zWOG0",
+  "oeffentlich": "BKRLKm9gX12M4V6T2t1B6e5XiM7wbxHw1o5hGmW3CP4CeTmfBxiIZf8G0QTKzSwepCtyYAidzKU3wE3BjvNY4bQ"
+ },
+ "bob": {
+  "id": 3,
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgvMnvT7e7DPC8YmLOrmhCX25_PW6GnsaRoKYgJhJCpE-hRANCAATxkvDdGQ0XngvY1JRdXLto0j596Ke_ZY7RfXL-13lTkKruIASu_qmowPKA9rirD9feS707dbLGJXklKuNqyIwv",
+  "oeffentlich": "BPGS8N0ZDReeC9jUlF1cu2jSPn3op79ljtF9cv7XeVOQqu4gBK7-qajA8oD2uKsP195LvTt1ssYleSUq42rIjC8"
+ },
+ "cleo": {
+  "id": 4,
+  "privat": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg_UQUe-2Jf8eGdZDTaiqCphkxio8jdWMN-5VgQESnAHqhRANCAAS2EYySfR60G5OKzL-egrNfOnU0HPWSgl3M3gWkM71ZpigFPp2wnKUZhJGDuQtBRauoU9PhUeMXQcVFWenBhk3q",
+  "oeffentlich": "BLYRjJJ9HrQbk4rMv56Cs186dTQc9ZKCXczeBaQzvVmmKAU-nbCcpRmEkYO5C0FFq6hT0-FR4xdBxUVZ6cGGTeo"
+ },
+ "v1": {
+  "umschlag": "{\"v\":1,\"s\":\"BKRLKm9gX12M4V6T2t1B6e5XiM7wbxHw1o5hGmW3CP4CeTmfBxiIZf8G0QTKzSwepCtyYAidzKU3wE3BjvNY4bQ\",\"n\":\"8oZ9PkXAyqZUJW1R\",\"c\":\"gJwbODDF5rHXrTdPU7iMH9KeJlAKEFPwuRQfOOP9SgFGAZc4vQGsqyeTQSwR81vozl5qU2Fds-gmxYwJ6s-K1z3IGSz0Q_t5LBQhGGIhoXY\",\"k\":{\"2\":{\"e\":\"BKjGSUZvMgvuCpIvPFdUcLVn3I-zKQ38b7u9dj_wVEqXLAeZzDaS74uAWXyuYDRMJ5Qury7sGDXh_n3xhPbbA1w\",\"n\":\"qNlAgUEli0Ds-YTy\",\"w\":\"2ttA2ulFbrNzOHGWgXXbW3cfhFp_itx-5eOoJ0-gPb5nGOtkjnItgXYe3R0oCME1\"},\"3\":{\"e\":\"BLVDfGvcdAv-CG3hqrFIUmwpfbQGBGn2Itfojqa77Gdjv07i6Ubd5ct99UE9X86G1hPBAMnLhqpV0jA6RnSa9Aw\",\"n\":\"dQrXCYgZhWGd41Lq\",\"w\":\"SK-lLrsUvI_Wd18IgVfmYuBP15n5yAYycEDCraPDgbHQAn_ZQ82kLymNEC1fOOIW\"}}}",
+  "text": "Hallo Bob 👋"
+ },
+ "v2": {
+  "umschlag": "{\"v\":2,\"s\":\"BKRLKm9gX12M4V6T2t1B6e5XiM7wbxHw1o5hGmW3CP4CeTmfBxiIZf8G0QTKzSwepCtyYAidzKU3wE3BjvNY4bQ\",\"n\":\"eT9VaceVu18xOo-q\",\"c\":\"b4ssCZTZsjieie64lmhSC28JnkgyLcnihmVaOMKEHIhKrLWgTW2fTQQQdbM5ZY_xNw-eEzYNbhLaomX6CD0zX2SFu4b52OXnJbY6hbfWwULY5qwnYCYyhTZ62va28vvILl2Lwam6hCP_Za8nbFs-e_CNGC6-6cjEzB8EUNULx8KZpoSi5eK00nuIkEC2V6EomaF3ZeRn3tYLVbH0_pL7mtLBMx8G-CngmEff8BF6lZbG0_lOM1Cje4fcajMyB2eN-q2itEKKIZZnch8167TKmhSSqB4ZA6YN56a3faeaO5BwhdcFxOxeHlABW-kL3wWv5Nj7lvS1ekpPsYj21jtmY4lZcEGVniCdhlU5pEWmKJE\",\"k\":{\"2\":{\"e\":\"BM52ThqMS6mjvwp4XNC_Lfpb9Dja1SQFrhzAdD-pRc-wXwRiq0eWI47acfSRxbynb2GCn3DabS-X_LRBLaA2UFM\",\"n\":\"T4ZgemgCHoAn6gUA\",\"w\":\"HVPS-vI1jBwd5bZ886USiRUyvCU4icWHPRTXb1MrJxDLT8AQ2Tc_bn-cFEfmaLpg\"},\"3\":{\"e\":\"BLO5sC9bLA3uA0u4OPVyRPm6Ydn0jkeuJ9zNL3g4-PJkgFG8Ot9WqV9wB4d40rNkXK5G8W8pzA3nbN1uVJQX2tY\",\"n\":\"7V8WJkpONKZKk0Cn\",\"w\":\"kVSxr81F7uCOZicoM0uVTMgxv9NKNoXzYDDDyMeoL_CTDIKAziHSXanH58EbRiRc\"}},\"b\":[\"AAAAAAAAAAAAAAAAAAAAAA\"]}",
+  "text": "Mit Bild",
+  "bildChiffrat": "fR3LhN99gDAysK93rgHbhaBfSv9yEaBZReNiGCUCHMRAljpy-eVGyHdvaYY",
+  "bildKlar": "a2VpbiBlY2h0ZXMgQmlsZCwgYWJlciBCeXRlcw"
+ },
+ "gruppe": {
+  "umschlag": "{\"v\":1,\"s\":\"BKRLKm9gX12M4V6T2t1B6e5XiM7wbxHw1o5hGmW3CP4CeTmfBxiIZf8G0QTKzSwepCtyYAidzKU3wE3BjvNY4bQ\",\"n\":\"oOTO1O4MEF5sYYkU\",\"c\":\"CIFC6BqdOYeDccYTUsSodYwkDvWoGy4v3-RVrG6PqZUR9wO4FJOIt9Q4Qh_qGXuHlfHPZt1vgKbtd7x9feuJ9qFw6TPVwolWW3N65xYBkZE\",\"k\":{\"2\":{\"e\":\"BFuGWmJ9JgAObiF4ibRXH-fUToSQ7vgWdhQTTauHApLsBYKRklBOzNDR7T1-JIK1HvC5rW43IkM3h_CY65ln_I8\",\"n\":\"B0-nnyquEaXqWMHw\",\"w\":\"85AjVJwHGoiAr4_gEEvobvGXlJxPu49L8U-phA0WW9Y68QticaGvF3VkMEG9VL59\"},\"3\":{\"e\":\"BKe18G6SA25fQ9zw3GqSmAoIc987Fn7cb2G6qWPy5Xmx3bidzXJht1Ttb2qP1hfNfeBxxkQ8kQJPOyBIs4bSSwQ\",\"n\":\"0f0IqGtTwN6B4kVM\",\"w\":\"W_1MXLMuzmFnf0maetiAB3gFu8nSMxqPUw0dcqNbljNMaPp6Lur-cPmWI9EDbDUq\"},\"4\":{\"e\":\"BFRD4MavxhAfZ5S_mq5hG9oIkD1c014GqXyBkLOMQT-9IoaSMbJ4aiVPdx1nrqGYJIcWoMcxUgc4Us4dB3ydNAg\",\"n\":\"ulB14-uFL8wwZiH3\",\"w\":\"a2l7H1a8oCZ7pf-5Rz8QhIcVOT1e6QDlHCENld2HHLfflI4sddGClRByCtm4GYtS\"}}}",
+  "rid": "g9",
+  "text": "An alle"
+ },
+ "gruppenname": {
+  "umschlag": "{\"v\":1,\"s\":\"BKRLKm9gX12M4V6T2t1B6e5XiM7wbxHw1o5hGmW3CP4CeTmfBxiIZf8G0QTKzSwepCtyYAidzKU3wE3BjvNY4bQ\",\"n\":\"GtmRBy9qVQvh8287\",\"c\":\"ZOLg350MHM-Ome7v2QtMoJIxyPCpGhj1146243OnvmqGu2lj_OVqmg8UcdWICbtG_6zZkBKhchgTcmNWZt2Vh_2Kk9P2BRyC7ktY1BLnFSI\",\"k\":{\"2\":{\"e\":\"BCnXxUuF_1XNpCAXRUUDLCNfBVcOrOcTn3eFL5aTSgAAdCVGXPGcV_XG1BipfckuhY4pASLjfEZP837oN3TMIV8\",\"n\":\"BMo4TqhkL3Qpa3wq\",\"w\":\"nPVWslcJpRu9T4f6DS-9EiH_VdYI23FwxTjM_ECgMRaXT0zMbswY2kixg4qVy--z\"},\"3\":{\"e\":\"BJehl32DW16QWKptLvhDdIFM3g2TfsW-20qjlKDkjYmhYsZbsNzgJamnQVQhk--eVSSZ6U6tyR786arpk3ggA3U\",\"n\":\"vQ0_K11TapP4DMV7\",\"w\":\"F0A5uk-z4zJGpk5jp9ORgHaseCKdZOw9n2SRJAOolRg6Ru_5mPNU4ZZnlZmCE9cT\"},\"4\":{\"e\":\"BL5GyTHEFDgY32DSRZgDiBauby99brVvgtFqG34lmWFcj2ZLt8mLFtj7j30uDjSJjYCARTqUObeGiH8vLgW_wno\",\"n\":\"8YdLDkuLo3nSShsX\",\"w\":\"jcQ0FCd_J3lFTVHe-IdZgOdtpZjX_nLMHsuhrk6fJiVBO1A67ib-AP_O0GrTYSMT\"}}}",
+  "von": 2,
+  "name": "Café Größe Ärger 🍻"
+ },
+ "reaktion": {
+  "umschlag": "{\"v\":1,\"s\":\"BPGS8N0ZDReeC9jUlF1cu2jSPn3op79ljtF9cv7XeVOQqu4gBK7-qajA8oD2uKsP195LvTt1ssYleSUq42rIjC8\",\"n\":\"p4kNA3Hso_nMVxMM\",\"c\":\"a1Fa7ZCyopRJ43cfImks2iM5zRGwwQ\",\"k\":{\"2\":{\"e\":\"BPltAHjw_vkFD_PF7t9hRzcG1jb3vG_e9SiKZpunV9l6n3RysMtsBFiHchHtfkogu0Vltf9bvU21Mfp_1Hm3LrQ\",\"n\":\"qBlR_1wrzZu93iaj\",\"w\":\"qsvhbDFWFcMSKnEcrPdpJr9gGjh5ysWQ4qEWFuCF-tQwCKnvrdcW_B2aCQYus25x\"},\"3\":{\"e\":\"BL47xi0tXUzTWSlyFz3nIoUUwkhI1cxWL024FMzBZkH7LvlEygPJSqn1zXPdFmc-xD5Vnl1TCXiNFDoNKDSewso\",\"n\":\"0zwdzZmqxesaRWEN\",\"w\":\"gr6LJUoiG0CwmYzJZ0WdSN_rek_CzUZMwJX_ZqWPN3M2eP7OdjwqVV3Ig4_HnWh7\"}}}",
+  "mid": 42,
+  "sid": 3,
+  "konv": "p2-3",
+  "emoji": "❤️"
+ },
+ "einpacken": {
+  "prf": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "uid": 2,
+  "credId": "cred-ada",
+  "gepackt": "B0OY4s524mgPNg8y.HJoBeTdmrocMCpLedD38MPpMYLdjEdtkw3MXyC-ZGOUyxf6EnTWqdj9iOJGpslRhd173dVZaUKlmtwUFopuWEU24fdr8Gz8Z5Eoi0saW1GrbEBFTYRUrZ4eCQwa6HhCSY5g4ozxEttHWsBBORJIuMYNBcHjlhi3EuD8KVo94iMCA5Xdjvj1e-8iGW8TiQCVFOZAG4w5dHBUtDw"
+ },
+ "code": {
+  "roh": "BxQhLjtIVWJvfImWo7C9ytfk8f4",
+  "code": "0WA2-2BHV-91AP-4VVW-H6BA-7C5X-SBBY-9WFY",
+  "uid": 2,
+  "gepackt": "RDzsEYI1AlECyqJm.hGhhy6hZU6boAtu2rZYEZr8D4czdujjRFHr4yfuNdOSqKfbyouy5N7o6-61bYWo3Le7Qf5yy74S8lDR_xo5fppQY8HMg7KdsbYUe_1eIV2W-MO3lBEEbmetkj8xOhtXmZFojujTEeiAOrZJB299x-45IC1dqNR_LJBVFpT3Fv5_1sTMaLe1HipDlER9FcxFawTQ78FafBcYYdw"
+ },
+ "sicherheitsnummer": "04142 25155 21883 19226 09376 74890 05228 85025",
+ "fingerabdruck": "4b879 cd181 2e05d b8b15"
+}
