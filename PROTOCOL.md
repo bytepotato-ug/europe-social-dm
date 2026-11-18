@@ -310,7 +310,7 @@ scanned the code ([3.3](#33-pairing-a-device)). The new device, in turn, accepts
 against the public key the server reports for the account. A malicious server could therefore answer a pairing
 request itself and hand the new device a key of its own; messages that device then sends would be readable by the
 server, and contacts who have the real key pinned would see a "sender key changed" warning. The server cannot obtain
-the real key this way. Fix in progress: the new device will also ask its user to confirm the number before it
+the real key this way. Planned, not built yet: the new device will also ask its user to confirm the number before it
 accepts a key.
 
 ## 10. Glossary

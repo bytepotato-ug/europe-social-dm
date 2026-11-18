@@ -67,6 +67,6 @@ bösartiger Server könnte eine Kopplungsanfrage deshalb selbst beantworten und 
 echten Schlüssel bekommt er so nicht, aber was N danach sendet, könnte er lesen; Kontakte mit gemerktem Schlüssel sähen
 „sender key changed“. Über den QR-Weg weiß A, dass pubN echt ist, N weiß aber nicht, dass pubA echt ist.
 
-Abhilfe (in Arbeit): Auch N fragt seinen Menschen, ob das andere Gerät dieselbe Zahl zeigt, bevor es einen Schlüssel
+Abhilfe (geplant, noch nicht gebaut): Auch N fragt seinen Menschen, ob das andere Gerät dieselbe Zahl zeigt, bevor es einen Schlüssel
 annimmt. Die Zahl hängt an beiden Einmal-Schlüsseln; ein untergeschobener Schlüssel ergibt eine andere Zahl, und ohne
 ein zweites Gerät, das überhaupt eine Zahl zeigt, gibt es nichts zu bestätigen.
