@@ -43,7 +43,7 @@ Code identifiers and comments are German; [PROTOCOL.md](PROTOCOL.md#10-glossary)
 ## Running the tests
 
 ```bash
-node --test test/                          # web, Node 20 or newer
+node --test test/*.test.mjs                
 (cd ios/EuropeKit && swift test)           # Swift, needs Xcode
 (cd android && ./gradlew :kern:test)       # Kotlin, needs a JDK 21 or newer
 ```
